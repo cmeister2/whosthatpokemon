@@ -1,0 +1,36 @@
+[package]
+name = "whosthatpokemon"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.90.0"
+description = "Recognise trading cards in images with ranked matches and confidence scores"
+license = "MIT"
+repository = "https://github.com/cmeister2/whosthatpokemon"
+readme = "README.md"
+keywords = ["trading-cards", "recognition", "magic", "computer-vision", "cli"]
+categories = ["multimedia::images", "command-line-utilities"]
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
+
+[lints.rust]
+missing_docs = "deny"
+
+[lints.clippy]
+missing_docs_in_private_items = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+flate2 = "1.1.10"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+imageproc = { version = "0.27.0", default-features = false }
+magicextract = { git = "https://github.com/cmeister2/magicextract", rev = "2c81797da2dc5760fbc5944818d59b436c0b5fe8", version = "0.0.0" }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24"], optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = { version = "0.11.1", optional = true }
+thiserror = "2.0.21"
+ureq = { version = "3.4.2", features = ["json"] }
+
+[features]
+clip = ["dep:ort", "dep:sha2"]
