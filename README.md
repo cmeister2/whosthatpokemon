@@ -297,11 +297,11 @@ attribution and licences in the explorer's documentation.
 
 ## Releases
 
-Registry publication currently requires a dependency update: `magicextract` is
-pinned to public Git revision `2c81797da2dc5760fbc5944818d59b436c0b5fe8` and has
-no published crates.io release. Cargo rejects publishing a crate whose Git
-dependency has no matching registry version. Publish `magicextract` first, then
-update and verify its registry dependency before enabling releases here.
+The extractor uses the published `magicextract` registry dependency. Before a
+release tag is created, preparation injects the release version into both Cargo
+files and runs `cargo publish --dry-run --locked --allow-dirty` to verify package
+contents, registry dependencies and compilation. Actual registry upload follows
+tag creation; credentials or service availability can still affect that step.
 
 The configured repository is `https://github.com/cmeister2/whosthatpokemon`.
 Before publishing, add a **`CARGO_REGISTRY_TOKEN`** repository Actions secret

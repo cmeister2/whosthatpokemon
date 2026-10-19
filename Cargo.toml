@@ -28,7 +28,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 flate2 = "1.1.10"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 imageproc = { version = "0.27.0", default-features = false }
-magicextract = { git = "https://github.com/cmeister2/magicextract", rev = "2c81797da2dc5760fbc5944818d59b436c0b5fe8", version = "0.0.0" }
+magicextract = "0.1.0"
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24"], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

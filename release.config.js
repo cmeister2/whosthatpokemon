@@ -11,7 +11,8 @@ export default {
       {
         verifyConditionsCmd:
           'node -e "if (!process.env.CARGO_REGISTRY_TOKEN?.trim()) { console.error(\'Set the CARGO_REGISTRY_TOKEN repository secret before releasing.\'); process.exit(1); }"',
-        prepareCmd: "node scripts/prepare-release.mjs ${nextRelease.version}",
+        prepareCmd:
+          "node scripts/prepare-release.mjs ${nextRelease.version} && cargo publish --dry-run --locked --allow-dirty",
         publishCmd: "cargo publish --locked --allow-dirty",
       },
     ],
