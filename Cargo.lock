@@ -653,7 +653,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "magicextract"
 version = "0.0.0"
-source = "git+https://github.com/cmeister2/magicextract?rev=2c81797da2dc5760fbc5944818d59b436c0b5fe8#2c81797da2dc5760fbc5944818d59b436c0b5fe8"
+source = "git+https://github.com/cmeister2/magicextract?rev=5d9fe878532bbe9fb8b3087f72f9e1984d81f597#5d9fe878532bbe9fb8b3087f72f9e1984d81f597"
 dependencies = [
  "image",
  "imageproc",
