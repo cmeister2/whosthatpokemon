@@ -1,10 +1,10 @@
 const $ = (id) => document.getElementById(id);
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const regionDescriptions = {
-  artwork: ['Artwork', 'The artwork’s structure and colour are useful even when the printed text is small.', '#c76f77'],
-  title: ['Title bar', 'A fuzzy name match helps identify the card. It usually does not distinguish reprints.', '#ae812f'],
-  rules: ['Rules text', 'Distinctive words can identify a card even if its title is blurred. Short, common text needs more evidence.', '#5e8fba'],
-  footer: ['Bottom bar', 'The set code and collector number together can identify a printing when both are readable.', '#9470b7'],
+  artwork: ['Artwork', 'Compares the artwork’s structure and colour.', '#b44d57'],
+  title: ['Title bar', 'Fuzzy name matching identifies cards but usually leaves reprints unresolved.', '#95620b'],
+  rules: ['Rules text', 'Matches distinctive words against printed and Oracle text.', '#326a9f'],
+  footer: ['Bottom bar', 'Looks for a set code, collector number, and language.', '#8053a0'],
 };
 const templates = {
   modern: { title: [.07, .04, .80, .10], artwork: [.09, .16, .91, .57], rules: [.075, .60, .925, .90], footer: [.035, .90, .96, .995] },
@@ -141,7 +141,7 @@ async function selectCard(index) {
   const tabs = $('card-tabs');
   tabs.replaceChildren();
   state.report?.cards.forEach((_, cardIndex) => {
-    const button = element('button', `card-tab${cardIndex === index ? ' active' : ''}`, `Card ${String(cardIndex + 1).padStart(2, '0')}`);
+    const button = element('button', `card-tab${cardIndex === index ? ' active' : ''}`, `Card ${cardIndex + 1}`);
     button.setAttribute('aria-pressed', String(cardIndex === index));
     button.addEventListener('click', () => selectCard(cardIndex));
     tabs.append(button);
@@ -281,7 +281,7 @@ function renderRecognition() {
   const info = element('div');
   info.append(element('h4', 'result-name', best.card.face_name || best.card.name));
   info.append(element('p', 'result-printing', printingLabel(best.card)));
-  const caveat = identityStatus === 'unknown' ? 'Closest reference only. The match does not clear the acceptance threshold.' : identityStatus === 'ambiguous' ? 'Several identities remain close. Inspect the other clues.' : recognition.status === 'ambiguous' ? 'The identity is useful, but the exact printing needs another clue.' : `Visual confidence ${formatScore(recognition.confidence)} · heuristic`;
+  const caveat = identityStatus === 'unknown' ? 'Closest reference; below the acceptance threshold.' : identityStatus === 'ambiguous' ? 'Several card identities have similar scores.' : recognition.status === 'ambiguous' ? 'Card identity matched; printing unresolved.' : `Confidence ${formatScore(recognition.confidence)} (uncalibrated)`;
   info.append(element('p', 'result-caveat', caveat));
   cardRow.append(info);
   result.append(cardRow);
@@ -289,7 +289,7 @@ function renderRecognition() {
     const item = element('li');
     const button = element('button', `candidate-button${index === state.candidateIndex ? ' active' : ''}`);
     button.setAttribute('aria-pressed', String(index === state.candidateIndex));
-    button.append(element('span', 'candidate-number', String(index + 1).padStart(2, '0')));
+    button.append(element('span', 'candidate-number', String(index + 1)));
     const detail = element('span', 'candidate-information');
     detail.append(element('span', 'candidate-name', candidate.card.face_name || candidate.card.name));
     detail.append(element('span', 'candidate-set', printingLabel(candidate.card)));
@@ -354,7 +354,7 @@ async function selectSample(id) {
     state.sourceUrl = sample.image;
     await showSource(sample.image);
     await displayReport(report);
-    setStatus('Recorded output from the real Rust pipeline. “Run live again” repeats extraction and matching locally.');
+    setStatus('Saved sample output. Run again to repeat extraction and matching.');
   } catch (error) {
     setStatus(error.message, true);
   } finally {
@@ -365,13 +365,13 @@ async function selectSample(id) {
 async function scanCurrentImage() {
   if (!state.sourceBytes) return;
   setBusy(true);
-  setStatus('Loading the Rust WebAssembly engine and running magicextract locally…');
+  setStatus('Extracting and matching cards…');
   const started = performance.now();
   try {
     const report = await runEngine('scan', { bytes: state.sourceBytes, cropped: $('cropped-input').checked });
     await displayReport(report);
     const elapsed = ((performance.now() - started) / 1000).toFixed(1);
-    setStatus(`Live local pipeline complete in ${elapsed}s, including any first-use loading. ${report.cards.length} card${report.cards.length === 1 ? '' : 's'} extracted.`);
+    setStatus(`Processed in ${elapsed}s. ${report.cards.length} card${report.cards.length === 1 ? '' : 's'} extracted.`);
   } catch (error) {
     setStatus(`Recognition could not complete: ${error.message}`, true);
   } finally { setBusy(false); }
@@ -468,7 +468,7 @@ async function searchText() {
     const matches = await runEngine('text', { observations });
     if (generation !== ocrGeneration) return;
     renderTextResults(matches);
-    $('ocr-status').textContent = 'Independent text ranking. No match probability is implied.';
+    $('ocr-status').textContent = 'Text results are separate from the visual ranking.';
   } catch (error) { if (generation === ocrGeneration) $('ocr-status').textContent = `Text search failed: ${error.message}`; }
   finally { if (generation === ocrGeneration) updateTextSearchButton(); }
 }
