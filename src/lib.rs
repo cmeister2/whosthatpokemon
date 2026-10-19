@@ -4,6 +4,10 @@
 //! returns ranked visual matches. [`mtg`] imports Magic: The Gathering references.
 //! Confidence scores describe visual evidence; they are not calibrated probabilities.
 
+/// Browser-compatible diagnostics exposing actual extraction crops and visual evidence.
+#[cfg(feature = "web")]
+pub mod browser;
+
 /// Optional CPU CLIP embeddings for images with difficult illumination or alignment.
 #[cfg(feature = "clip")]
 pub mod clip;

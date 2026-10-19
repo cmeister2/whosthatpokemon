@@ -1,0 +1,58 @@
+name: Pipeline explorer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/build-browser.sh"
+      - "scripts/check-browser.mjs"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2.87.29
+        with:
+          tool: wasm-bindgen@0.2.129
+      - name: Compile the actual extractor and matcher for the browser
+        run: scripts/build-browser.sh
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24"
+      - name: Exercise the built engine and public examples
+        run: node scripts/check-browser.mjs
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6.0.0
+      - name: Publish explorer
+        id: deployment
+        uses: actions/deploy-pages@v5.0.1

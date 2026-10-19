@@ -11,6 +11,9 @@ keywords = ["trading-cards", "recognition", "magic", "computer-vision", "cli"]
 categories = ["multimedia::images", "command-line-utilities"]
 include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [lints.rust]
 missing_docs = "deny"
 
@@ -20,6 +23,7 @@ missing_errors_doc = "deny"
 missing_panics_doc = "deny"
 
 [dependencies]
+base64 = { version = "0.23.1", optional = true }
 clap = { version = "4.6.7", features = ["derive"] }
 flate2 = "1.1.10"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -30,7 +34,14 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = { version = "0.11.1", optional = true }
 thiserror = "2.0.21"
-ureq = { version = "3.4.2", features = ["json"] }
+wasm-bindgen = { version = "0.2.129", optional = true }
 
 [features]
 clip = ["dep:ort", "dep:sha2"]
+web = ["dep:wasm-bindgen", "dep:base64"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4.3", features = ["wasm_js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "3.4.2", features = ["json"] }

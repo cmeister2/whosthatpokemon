@@ -1,0 +1,2 @@
+# Preserve upstream OCR distributions and exclude them from source-language statistics.
+docs/ocr/** -whitespace linguist-vendored

@@ -29,6 +29,21 @@ pub struct CardMetadata {
     pub illustration_id: Option<String>,
     /// Attribution or catalogue URL, when available.
     pub source: Option<String>,
+    /// Current Oracle rules text for this face; wording may differ from the image.
+    #[serde(default)]
+    pub oracle_text: Option<String>,
+    /// Printed rules text in the printing's language, when the catalogue supplies it.
+    #[serde(default)]
+    pub printed_text: Option<String>,
+    /// Printed localized title, when different from the English catalogue title.
+    #[serde(default)]
+    pub printed_name: Option<String>,
+    /// Face-specific card type, retained for diagnostics and future text constraints.
+    #[serde(default)]
+    pub type_line: Option<String>,
+    /// Scryfall layout identifier; a portrait region template is not valid for every layout.
+    #[serde(default)]
+    pub layout: Option<String>,
 }
 
 /// Controls retrieval size and acceptance of visual evidence.

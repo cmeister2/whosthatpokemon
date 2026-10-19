@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Inspect a trading-card recognition pipeline: picture capture, magicextract card crops, visual matching, and region-by-region OCR evidence.">
+    <meta name="theme-color" content="#f5f3ec">
+    <title>whosthatpokemon — Card recognition, opened up</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='10' y='6' width='28' height='36' rx='5' fill='%23292f2b'/%3E%3Cpath d='M16 16h16M16 24h10M16 32h16' stroke='%23d9edb0' stroke-width='3'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="styles.css">
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <header class="site-header wrap">
+      <a class="brand" href="#"><svg viewBox="0 0 32 36" aria-hidden="true"><rect x="3" y="3" width="22" height="29" rx="3" transform="rotate(-8 14 18)"/><rect x="8" y="3" width="21" height="29" rx="3"/><path d="M13 11h11M13 17h7M13 24h11"/></svg><span>whosthatpokemon<span class="brand-detail">THE CARD RECOGNITION LAB</span></span></a>
+      <nav aria-label="Main navigation"><a href="#pipeline">Pipeline</a><a href="#evidence">Evidence</a><a href="#method">How it works</a><a class="github-link" href="https://github.com/cmeister2/whosthatpokemon">GitHub <span aria-hidden="true">↗</span></a></nav>
+    </header>
+
+    <main>
+      <section class="intro wrap">
+        <div class="eyebrow"><span class="tiny-cross">+</span> OPEN SOURCE · RUST · MAGIC: THE GATHERING</div>
+        <h1>From a picture<br>to <span class="serif-word">a card.</span><svg viewBox="0 0 156 56" aria-hidden="true"><path d="M4 38C53 7 83 9 133 25M116 5l23 22-30 12"/></svg></h1>
+        <div class="intro-bottom"><p>A closer look at what the machine sees. Follow a picture through card extraction, visual recognition, and the printed clues that help identify a card.</p><a class="text-link" href="#pipeline">Explore the pipeline <span aria-hidden="true">↓</span></a></div>
+      </section>
+
+      <section id="pipeline" class="pipeline-section wrap" aria-labelledby="pipeline-heading">
+        <div class="section-heading"><div><span class="section-index">01 / THE PIPELINE</span><h2 id="pipeline-heading">Every step, in the open.</h2></div><span class="local-badge"><span></span> Runs in your browser</span></div>
+        <div class="workbench-toolbar"><div class="sample-control"><label for="sample-select">Start with a sample</label><select id="sample-select" disabled><option>Loading samples…</option></select></div><div class="input-actions"><label class="check-label"><input id="cropped-input" type="checkbox"> Already cropped</label><button id="camera-button" class="button button-outline"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h3l1-2h6l1 2h3v10H3z"/><circle cx="10" cy="10.5" r="3"/></svg>Camera</button><label class="button button-dark" for="file-input"><span aria-hidden="true">↑</span> Upload picture</label><input id="file-input" type="file" accept="image/*" class="visually-hidden"></div></div>
+        <div id="sample-description" class="sample-description">Public test captures. Loading the first sample…</div>
+        <div class="pipeline-grid">
+          <article class="stage capture-stage">
+            <div class="stage-heading"><span class="step-number">1</span><div><h3>Picture capture</h3><p>The scene, before extraction</p></div><span class="stage-arrow" aria-hidden="true">→</span></div>
+            <div class="capture-frame"><img id="source-image" alt="Selected source picture" hidden><svg id="source-overlay" role="group" aria-label="Detected card outlines"></svg><div id="source-placeholder" class="image-placeholder">Loading the scene<span class="loading-dots">···</span></div><span id="source-dimensions" class="image-label"></span></div>
+            <div class="stage-foot"><span id="detection-count">Waiting for extraction</span><button id="rerun-button" class="text-button" disabled>Run live again <span aria-hidden="true">↻</span></button></div>
+            <div id="card-tabs" class="card-tabs" aria-label="Choose an extracted card"></div>
+          </article>
+
+          <article class="stage extraction-stage">
+            <div class="stage-heading"><span class="step-number">2</span><div><h3>magicextract</h3><p>Detect · rectify · crop</p></div><span class="stage-arrow" aria-hidden="true">→</span></div>
+            <div class="crop-frame"><canvas id="crop-canvas" width="500" height="700" aria-label="Rectified card with recognition regions"></canvas><svg id="region-overlay" viewBox="0 0 500 700" role="group" aria-label="Card regions used for evidence"></svg><img id="raw-crop-image" alt="Raw perspective-corrected magicextract output, before orientation correction" hidden><button id="raw-crop-button" class="crop-view-toggle" aria-pressed="false" hidden>Show raw crop</button><div id="crop-placeholder" class="image-placeholder">An extracted card appears here</div></div>
+            <div class="stage-foot"><span id="crop-information">Perspective corrected</span><button id="rotate-button" class="text-button" disabled>Rotate <span aria-hidden="true">↻</span></button></div>
+            <div class="region-tabs" aria-label="Inspect a card region"><button class="region-button active" data-region="artwork"><span class="dot artwork-dot"></span>Artwork</button><button class="region-button" data-region="title"><span class="dot title-dot"></span>Title</button><button class="region-button" data-region="rules"><span class="dot rules-dot"></span>Rules</button><button class="region-button" data-region="footer"><span class="dot footer-dot"></span>Bottom bar</button></div>
+          </article>
+
+          <article class="stage recognition-stage">
+            <div class="stage-heading"><span class="step-number">3</span><div><h3>Recognition</h3><p>Rank the reference catalog</p></div></div>
+            <div id="recognition-result" class="recognition-result"><div class="result-placeholder">A match is a set of evidence.<br>Explore it here.</div></div>
+            <div class="rank-heading"><span>REFERENCE CANDIDATES</span><span>SIMILARITY</span></div><ol id="candidate-list" class="candidate-list"></ol>
+            <p class="score-caption">Scores measure similarity to this catalog. They are <strong>not probabilities</strong>.</p>
+          </article>
+        </div>
+        <div class="workbench-status"><p id="status-message" role="status" aria-live="polite">Preparing the public sample…</p><span id="catalog-size"></span></div>
+        <p class="privacy-note"><svg viewBox="0 0 16 18" aria-hidden="true"><path d="M3 8V5a5 5 0 0 1 10 0v3M2 8h12v9H2z"/></svg>Your pictures stay on this device. Extraction, matching, and optional English OCR run locally. No picture is uploaded. Pictures are resized for this demo; up to 16 cards per scene.</p>
+      </section>
+
+      <section id="evidence" class="evidence-section wrap" aria-labelledby="evidence-heading">
+        <div class="section-heading"><div><span class="section-index">02 / THE EVIDENCE</span><h2 id="evidence-heading">What identifies this card?</h2></div><p class="heading-aside">Different clues answer different questions.<br>A card’s identity and its exact printing can differ.</p></div>
+        <div class="evidence-grid">
+          <article class="evidence-panel visual-panel"><div class="panel-title"><span class="small-symbol">◈</span><div><h3>Visual evidence</h3><p>The measurements behind the selected candidate.</p></div><span class="method-tag">RUST</span></div><div class="region-preview-row"><canvas id="region-preview" width="360" height="180" aria-label="Enlarged selected card region"></canvas><div><span id="region-name" class="region-name">Artwork</span><p id="region-description">The artwork’s structure and colour are useful even when the printed text is small.</p></div></div><div id="visual-measurements" class="measurements"><p class="empty-state">Select a card to inspect its measurements.</p></div><p id="visual-method-note" class="panel-note">The portable matcher compares the full card and artwork across four rotations and several reference crops.</p></article>
+
+          <article class="evidence-panel text-panel"><div class="panel-title"><span class="small-symbol text-symbol">Aa</span><div><h3>Read the printed clues</h3><p>Extract text, inspect it, then search the catalog.</p></div><span class="method-tag">OCR + RUST</span></div><div class="ocr-toolbar"><label for="layout-select">Frame template</label><select id="layout-select"><option value="modern">Modern / M15 onward</option><option value="classic">Older / pre-M15</option></select><button id="ocr-button" class="button button-dark" disabled>Read card text</button></div><p class="ocr-note">OCR is optional and downloads a local English model on first use. Boxes are templates for conventional portrait frames; unusual layouts need custom regions. Rotate the card or correct the text below when needed.</p><div class="ocr-fields"><label class="ocr-field title-field"><span><i class="dot title-dot"></i> Title <small id="title-confidence"></small></span><input id="title-text" type="text" placeholder="Title from the card" autocomplete="off"></label><label class="ocr-field footer-field"><span><i class="dot footer-dot"></i> Bottom bar <small id="footer-confidence"></small></span><input id="footer-text" type="text" placeholder="Collector number · set · language" autocomplete="off"></label><label class="ocr-field rules-field"><span><i class="dot rules-dot"></i> Rules text <small id="rules-confidence"></small></span><textarea id="rules-text" rows="3" placeholder="Rules text from the card, including imperfect OCR"></textarea></label></div><div class="text-search-actions"><button id="text-search-button" class="button button-outline" disabled>Search text evidence <span aria-hidden="true">→</span></button><span id="ocr-status" role="status" aria-live="polite">No OCR run yet.</span></div><div id="text-results" class="text-results"></div></article>
+        </div>
+        <aside class="evidence-callout"><span aria-hidden="true">↳</span><p><strong>Why more than one clue?</strong> Several printings can share artwork. A title usually identifies the card; a readable set code and collector number can identify its printing. Rules text adds a useful cross-check when the title is blurred.</p></aside>
+      </section>
+
+      <section id="method" class="method-section wrap" aria-labelledby="method-heading"><div class="method-intro"><span class="section-index">03 / UNDER THE HOOD</span><h2 id="method-heading">The boxes are clues.<br><span class="serif-word">Here’s what they tell us.</span></h2><p>The extractor finds card-shaped regions. Recognition then compares the rectified image with reference cards. Reading text is a separate, inspectable source of evidence. Mana symbols, the type line, artist credits, and rarity are not independent match channels in this demo.</p><a class="text-link" href="https://github.com/cmeister2/whosthatpokemon">Read the source <span aria-hidden="true">↗</span></a></div><div class="method-rows"><article><span class="method-region title-colour">01</span><div><h3>Title bar</h3><p>OCR reads the card name. Normalised fuzzy matching tolerates small recognition errors. Titles often identify the game object, while reprints can keep the same name.</p></div></article><article><span class="method-region artwork-colour">02</span><div><h3>Artwork &amp; full card</h3><p>Luminance structure, artwork colour, and a perceptual hash provide visual similarity. Difficult perspectives can use local features and geometric verification. Artwork shared by reprints leaves the exact printing ambiguous.</p></div></article><article><span class="method-region rules-colour">03</span><div><h3>Rules text</h3><p>Yes: fuzzy matching can use OCR from the rules box. Rare words carry more information than a common phrase. Printed wording can differ from current Oracle text; reminder text, language, and a short text box can limit the evidence.</p></div></article><article><span class="method-region footer-colour">04</span><div><h3>Bottom bar</h3><p>A recognised set code and collector number are strong printing clues. Modern frames give these fields a consistent home; older layouts need different boxes. Some early cards have no printed collector number.</p></div></article></div></section>
+
+      <section class="limits-section wrap"><div><span class="section-index">A NOTE ON CERTAINTY</span><h2>It’s allowed to say<br><span class="serif-word">“I’m not sure.”</span></h2></div><div><p>The demo searches a small, disclosed catalog. An absent card can resemble a present one. A strong score, a clear margin over other identities, and agreement between clues are more informative than a single top result.</p><p>Visual ranking and text ranking remain separate here. Neither has been calibrated as a probability, and text evidence does not silently change the visual match.</p><div class="status-key"><span class="status-pill matched">Matched</span><span class="status-pill ambiguous">Ambiguous</span><span class="status-pill unknown">Unknown</span></div></div></section>
+    </main>
+
+    <footer class="site-footer wrap"><div><a class="footer-brand" href="#">whosthatpokemon</a><p>An open-source experiment in trading-card recognition.</p></div><div class="footer-links"><a href="https://github.com/cmeister2/whosthatpokemon">Source code ↗</a><a href="https://github.com/cmeister2/magicextract">magicextract ↗</a><a href="https://scryfall.com/docs/api">Scryfall API ↗</a><a href="https://magic.wizards.com/en/news/making-magic/directors-chair-2013-2014-01-06">Frame design ↗</a><a href="ocr/NOTICE.md">OCR licenses ↗</a></div><p class="art-attribution">Card images and Magic: The Gathering content © Wizards of the Coast. Reference images and metadata from Scryfall. Public rendered test scenes are illustrative fixtures, not photographs of a physical collection. This project is not affiliated with Wizards of the Coast.</p></footer>
+
+    <dialog id="camera-dialog" aria-labelledby="camera-heading"><div class="camera-dialog-heading"><h2 id="camera-heading">Capture a card</h2><button id="close-camera" class="text-button" aria-label="Close camera">✕</button></div><video id="camera-video" autoplay muted playsinline></video><p>Keep the whole card in frame, with even light and a little space around it.</p><button id="take-picture" class="button button-dark">Take picture</button></dialog>
+  </body>
+</html>

@@ -72,6 +72,8 @@ jobs:
     needs: [rust, msrv, coverage, release-regression]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     concurrency:
       group: release-${{ github.ref }}
       cancel-in-progress: false
@@ -92,10 +94,14 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Publish release
+        if: env.CARGO_REGISTRY_TOKEN != ''
         run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Explain missing publication credentials
+        if: env.CARGO_REGISTRY_TOKEN == ''
+        run: echo '::notice::Registry publishing is skipped until CARGO_REGISTRY_TOKEN is configured. Other checks and the fallback build still run.'
       - name: Build release or fallback version
         run: |
           if grep -Fxq 'version = "0.0.0"' Cargo.toml; then

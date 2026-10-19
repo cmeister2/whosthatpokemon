@@ -37,6 +37,21 @@ enum Command {
 /// Magic-specific catalogue preparation operations.
 #[derive(Debug, Subcommand)]
 enum MtgCommand {
+    /// Rank catalogue entries using independent title, footer, or rules OCR text.
+    Search {
+        /// Portable visual index containing searchable card metadata.
+        #[arg(long)]
+        index: PathBuf,
+        /// Observed or corrected text from the title bar.
+        #[arg(long, default_value = "")]
+        title: String,
+        /// Observed collector footer; a set code and number are needed together.
+        #[arg(long, default_value = "")]
+        footer: String,
+        /// Observed rules text; short generic phrases are ignored.
+        #[arg(long, default_value = "")]
+        rules: String,
+    },
     /// Build an offline index from local images and metadata.
     Index {
         /// Scryfall JSON/JSONL/gzip or local reference manifest.
@@ -150,6 +165,23 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), Error> {
     match cli.command {
         Command::Mtg { command } => match command {
+            MtgCommand::Search {
+                index,
+                title,
+                footer,
+                rules,
+            } => {
+                let index = CatalogIndex::load(index)?;
+                let observations = mtg::evidence::TextObservations {
+                    title,
+                    footer,
+                    rules,
+                };
+                write_json(
+                    &mtg::evidence::search(index.metadata(), &observations),
+                    None,
+                )
+            }
             MtgCommand::Index {
                 catalog,
                 images,

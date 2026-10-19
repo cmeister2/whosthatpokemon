@@ -4,7 +4,11 @@
 //! JSON Lines bulk files, or local manifests containing a `cards` array. Gzip is
 //! detected from its header. Importing and indexing never make network requests.
 
+/// Portrait text regions and independent, fuzzy catalogue searches over OCR evidence.
+pub mod evidence;
+
 /// Explicit Scryfall metadata and reference-image downloads.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod download;
 
 use std::collections::HashSet;
@@ -263,6 +267,14 @@ fn metadata(
     let face_name = face_text("name")?
         .or(optional_text(object, "face_name")?)
         .filter(|face_name| face_name != name);
+    // A physical face must not borrow rules or titles from its other face.
+    let physical_text = |key: &str| -> Result<Option<String>, Error> {
+        if face.is_some() {
+            face_text(key)
+        } else {
+            optional_text(object, key)
+        }
+    };
     Ok(CardMetadata {
         game: "mtg".into(),
         id: id.into(),
@@ -278,6 +290,11 @@ fn metadata(
         source: optional_text(object, "source")?
             .or(optional_text(object, "scryfall_uri")?)
             .or(optional_text(object, "uri")?),
+        oracle_text: physical_text("oracle_text")?,
+        printed_text: physical_text("printed_text")?,
+        printed_name: physical_text("printed_name")?,
+        type_line: physical_text("type_line")?,
+        layout: optional_text(object, "layout")?,
     })
 }
 
@@ -517,6 +534,41 @@ mod tests {
         assert_eq!(back.card.illustration_id.as_deref(), Some("back-art"));
         assert_eq!(back.card.language.as_deref(), Some("ja"));
         assert_eq!(back.card.collector_number.as_deref(), Some("42a"));
+    }
+
+    /// Text evidence remains attached to its physical face, including absent text.
+    #[test]
+    fn imports_text_fields_without_borrowing_another_faces_rules() {
+        let fixture = Fixture::new();
+        let content = json!([
+            {"id":"normal","name":"Bolt","oracle_text":"Deal three damage.",
+             "printed_text":"Three damage to target creature or player.",
+             "printed_name":"Éclair","type_line":"Instant","layout":"normal"},
+            {"id":"double","name":"Front // Back","layout":"transform",
+             "oracle_text":"Whole card summary must not be inherited.",
+             "card_faces":[
+                 {"name":"Front","oracle_text":"Front rules.","printed_name":"Face avant"},
+                 {"name":"Back","oracle_text":""}
+             ]}
+        ]);
+        let references =
+            read_references(&fixture.catalog(&content.to_string())).expect("text metadata");
+        assert_eq!(
+            references[0].card.oracle_text.as_deref(),
+            Some("Deal three damage.")
+        );
+        assert_eq!(references[0].card.printed_name.as_deref(), Some("Éclair"));
+        assert_eq!(references[0].card.type_line.as_deref(), Some("Instant"));
+        assert_eq!(
+            references[1].card.oracle_text.as_deref(),
+            Some("Front rules.")
+        );
+        assert_eq!(
+            references[1].card.printed_name.as_deref(),
+            Some("Face avant")
+        );
+        assert_eq!(references[2].card.oracle_text, None);
+        assert_eq!(references[2].card.printed_name, None);
     }
 
     /// Bad formats, duplicated faces, and partial search pages cannot pass as complete.

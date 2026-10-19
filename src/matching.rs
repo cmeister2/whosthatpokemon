@@ -13,7 +13,7 @@
 use std::{
     collections::HashSet,
     fs::File,
-    io::{BufReader, BufWriter, Write},
+    io::{BufReader, BufWriter, Read, Write},
     path::Path,
 };
 
@@ -110,6 +110,44 @@ struct BorrowedIndex<'a> {
     references: &'a [Reference],
 }
 
+/// Actual visual components used when ranking one reference face.
+///
+/// Global components use weights 0.20 for full-face luminance, 0.45 for artwork
+/// luminance, 0.05 for the artwork hash and 0.30 for artwork colour.
+/// Geometric fallback uses its own verified-correspondence score; the global
+/// components remain diagnostic.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct VisualEvidence {
+    /// Game namespace of the compared reference.
+    pub game: String,
+    /// Printing identifier of the compared reference.
+    pub id: String,
+    /// Physical face within the printing.
+    pub face_index: u32,
+    /// Final candidate similarity after any geometric fallback.
+    pub similarity: f32,
+    /// Positive full-face normalized luminance correlation.
+    pub full_luminance: f32,
+    /// Positive artwork normalized luminance correlation.
+    pub artwork_luminance: f32,
+    /// Artwork hue/saturation Hellinger coefficient.
+    pub artwork_colour: f32,
+    /// Artwork perceptual-hash agreement.
+    pub artwork_hash: f32,
+    /// Inset fraction of the reference view producing the best global score.
+    pub reference_inset: f32,
+    /// Orientation used for these global components, clockwise in degrees.
+    pub global_rotation_degrees: u16,
+    /// Weighted global similarity before geometric fallback.
+    pub global_similarity: f32,
+    /// Either `global_descriptors` or `verified_geometry`.
+    pub method: &'static str,
+    /// Artwork structure measured after homography registration, when used.
+    pub registered_artwork_luminance: Option<f32>,
+    /// Artwork colour measured after homography registration, when used.
+    pub registered_artwork_colour: Option<f32>,
+}
+
 /// A reusable reference catalogue implementing the default portable matcher.
 ///
 /// Enrollment requires a tight, upright image of each known face. Query images
@@ -139,6 +177,11 @@ impl CatalogIndex {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.references.is_empty()
+    }
+
+    /// Iterate over enrolled physical-face metadata without exposing descriptors.
+    pub fn metadata(&self) -> impl Iterator<Item = &CardMetadata> {
+        self.references.iter().map(|reference| &reference.card)
     }
 
     /// Add an upright reference face and its game-specific identity.
@@ -215,7 +258,19 @@ impl CatalogIndex {
     /// [`Error::InvalidIndex`] for corrupt JSON, incompatible versions/schemes,
     /// invalid descriptors or inconsistent face metadata.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let reader = BufReader::new(File::open(path)?);
+        Self::from_reader(BufReader::new(File::open(path)?))
+    }
+
+    /// Read and validate an index from a stream, including in-memory browser data.
+    ///
+    /// Validation is identical to [`Self::load`]; no partially validated index is
+    /// returned when a descriptor, metadata record or compatibility field fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidIndex`] for unreadable or invalid JSON, unsupported
+    /// formats, invalid metadata, duplicate faces or corrupt descriptors.
+    pub fn from_reader(reader: impl Read) -> Result<Self, Error> {
         let mut stored: StoredIndex = serde_json::from_reader(reader)
             .map_err(|error| Error::InvalidIndex(format!("could not decode index: {error}")))?;
         if stored.format_version != FORMAT_VERSION || stored.scheme != SCHEME {
@@ -272,25 +327,37 @@ impl CatalogIndex {
     }
 }
 
-impl Matcher for CatalogIndex {
-    fn recognize(
+impl CatalogIndex {
+    /// Rank references and retain the actual descriptor evidence for each result.
+    ///
+    /// Scores and acceptance decisions are identical to [`Self::recognize`].
+    /// Geometric scores are identified explicitly, rather than being attributed
+    /// to the unrelated global descriptor sum.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid options, an empty image or an empty catalogue.
+    pub fn recognize_explained(
         &self,
         image: &DynamicImage,
         options: &MatchOptions,
-    ) -> Result<Recognition, Error> {
+    ) -> Result<(Recognition, Vec<VisualEvidence>), Error> {
         options.validate()?;
         validate_image(image)?;
         if self.references.is_empty() {
             return Err(Error::InvalidCatalog("reference index is empty".into()));
         }
         if !has_texture(image) {
-            return Ok(Recognition {
-                status: MatchStatus::Unknown,
-                identity_status: MatchStatus::Unknown,
-                confidence: 0.0,
-                identity_confidence: 0.0,
-                candidates: Vec::new(),
-            });
+            return Ok((
+                Recognition {
+                    status: MatchStatus::Unknown,
+                    identity_status: MatchStatus::Unknown,
+                    confidence: 0.0,
+                    identity_confidence: 0.0,
+                    candidates: Vec::new(),
+                },
+                Vec::new(),
+            ));
         }
         let rgb = image.to_rgb8();
         let rotations = [
@@ -300,21 +367,31 @@ impl Matcher for CatalogIndex {
             image::imageops::rotate270(&rgb),
         ];
         let queries: Vec<_> = rotations.iter().map(Descriptor::from_image).collect();
+        let mut explanations = Vec::with_capacity(self.references.len());
         let mut ranked: Vec<_> = self
             .references
             .iter()
             .map(|reference| {
                 let mut similarity = 0.0_f32;
                 let mut rotation_degrees = 0;
+                let mut best_view = 0;
                 for (rotation, query) in queries.iter().enumerate() {
-                    for view in &reference.views {
+                    for (view_index, view) in reference.views.iter().enumerate() {
                         let score = query.similarity(view);
                         if score > similarity {
                             similarity = score;
                             rotation_degrees = rotation as u16 * 90;
+                            best_view = view_index;
                         }
                     }
                 }
+                let query = &queries[usize::from(rotation_degrees / 90)];
+                explanations.push(query.explain(
+                    &reference.views[best_view],
+                    &reference.card,
+                    INSETS[best_view],
+                    rotation_degrees,
+                ));
                 MatchCandidate {
                     card: reference.card.clone(),
                     similarity,
@@ -329,13 +406,18 @@ impl Matcher for CatalogIndex {
             .iter()
             .any(|candidate| candidate.similarity >= options.min_similarity)
         {
-            return finish_recognition(ranked, options);
+            let result = finish_recognition(ranked, options)?;
+            return Ok(with_explanations(result, explanations));
         }
         let query_features = local::extract(image);
         let normalized_query =
             image::imageops::resize(&rgb, local::WIDTH, local::HEIGHT, FilterType::Triangle);
         let mut used_geometry = false;
-        for (candidate, reference) in ranked.iter_mut().zip(&self.references) {
+        for ((candidate, reference), explanation) in ranked
+            .iter_mut()
+            .zip(&self.references)
+            .zip(&mut explanations)
+        {
             let Some(evidence) = local::match_evidence(&query_features, &reference.features) else {
                 continue;
             };
@@ -378,6 +460,10 @@ impl Matcher for CatalogIndex {
             }
             candidate.similarity = evidence.score;
             candidate.rotation_degrees = evidence.rotation_degrees;
+            explanation.similarity = evidence.score;
+            explanation.method = "verified_geometry";
+            explanation.registered_artwork_luminance = Some(art);
+            explanation.registered_artwork_colour = Some(colour);
             used_geometry = true;
         }
         let mut result = finish_recognition(ranked, options)?;
@@ -408,8 +494,41 @@ impl Matcher for CatalogIndex {
                 result.identity_confidence = 0.0;
             }
         }
-        Ok(result)
+        Ok(with_explanations(result, explanations))
     }
+}
+
+impl Matcher for CatalogIndex {
+    fn recognize(
+        &self,
+        image: &DynamicImage,
+        options: &MatchOptions,
+    ) -> Result<Recognition, Error> {
+        self.recognize_explained(image, options)
+            .map(|(recognition, _)| recognition)
+    }
+}
+
+/// Retain explanations in the same order and with the same truncation as candidates.
+fn with_explanations(
+    recognition: Recognition,
+    explanations: Vec<VisualEvidence>,
+) -> (Recognition, Vec<VisualEvidence>) {
+    let ranked = recognition
+        .candidates
+        .iter()
+        .filter_map(|candidate| {
+            explanations
+                .iter()
+                .find(|evidence| {
+                    evidence.game == candidate.card.game
+                        && evidence.id == candidate.card.id
+                        && evidence.face_index == candidate.card.face_index
+                })
+                .cloned()
+        })
+        .collect();
+    (recognition, ranked)
 }
 
 /// Sort complete-gallery evidence and compute printing and semantic-identity decisions.
@@ -516,6 +635,47 @@ impl Descriptor {
             ));
         }
         Ok(())
+    }
+
+    /// Record the actual component measurements for a chosen global comparison.
+    fn explain(
+        &self,
+        reference: &Self,
+        card: &CardMetadata,
+        reference_inset: f32,
+        global_rotation_degrees: u16,
+    ) -> VisualEvidence {
+        VisualEvidence {
+            game: card.game.clone(),
+            id: card.id.clone(),
+            face_index: card.face_index,
+            similarity: self.similarity(reference),
+            full_luminance: signed_cosine(
+                &self.full,
+                &reference.full,
+                self.full_norm,
+                reference.full_norm,
+            ),
+            artwork_luminance: signed_cosine(
+                &self.art,
+                &reference.art,
+                self.art_norm,
+                reference.art_norm,
+            ),
+            artwork_colour: unsigned_cosine(
+                &self.histogram,
+                &reference.histogram,
+                self.histogram_norm,
+                reference.histogram_norm,
+            ),
+            artwork_hash: 1.0 - (self.hash ^ reference.hash).count_ones() as f32 / HASH_BITS as f32,
+            reference_inset,
+            global_rotation_degrees,
+            global_similarity: self.similarity(reference),
+            method: "global_descriptors",
+            registered_artwork_luminance: None,
+            registered_artwork_colour: None,
+        }
     }
 
     /// Fuse absolute full/artwork luminance, artwork frequency and colour evidence.
@@ -1031,9 +1191,15 @@ mod tests {
         let temporary = TemporaryIndex::new();
         index.save(&temporary.0).unwrap();
         let loaded = CatalogIndex::load(&temporary.0).unwrap();
+        let memory =
+            CatalogIndex::from_reader(std::fs::read(&temporary.0).unwrap().as_slice()).unwrap();
         let query = reference(7).rotate180();
         assert_eq!(
             index.recognize(&query, &MatchOptions::default()).unwrap(),
+            loaded.recognize(&query, &MatchOptions::default()).unwrap()
+        );
+        assert_eq!(
+            memory.recognize(&query, &MatchOptions::default()).unwrap(),
             loaded.recognize(&query, &MatchOptions::default()).unwrap()
         );
         let original: serde_json::Value =
@@ -1064,6 +1230,33 @@ mod tests {
                 CatalogIndex::load(&temporary.0),
                 Err(Error::InvalidIndex(_))
             ));
+            assert!(matches!(
+                CatalogIndex::from_reader(serde_json::to_vec(&value).unwrap().as_slice()),
+                Err(Error::InvalidIndex(_))
+            ));
         }
+    }
+
+    /// Reported global components reproduce the score at the chosen inset and rotation.
+    #[test]
+    fn explains_the_actual_chosen_comparison() {
+        let index = two_card_index();
+        let query = DynamicImage::ImageRgb8(inset_image(&reference(7).to_rgb8(), 0.10)).rotate90();
+        let (recognition, evidence) = index
+            .recognize_explained(&query, &MatchOptions::default())
+            .unwrap();
+        let best = &recognition.candidates[0];
+        let explanation = &evidence[0];
+        assert_eq!(best.card.id, "second");
+        assert_eq!(explanation.id, best.card.id);
+        assert_eq!(explanation.global_rotation_degrees, 270);
+        assert_eq!(explanation.reference_inset, 0.10);
+        assert_eq!(explanation.method, "global_descriptors");
+        let sum = 0.20 * explanation.full_luminance
+            + 0.45 * explanation.artwork_luminance
+            + 0.05 * explanation.artwork_hash
+            + 0.30 * explanation.artwork_colour;
+        assert!((best.similarity - sum).abs() < 1e-6);
+        assert!((explanation.global_similarity - sum).abs() < 1e-6);
     }
 }
