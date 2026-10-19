@@ -67,9 +67,21 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  success:
+    name: Success
+    needs: [rust, msrv, coverage, release-regression]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required checks passed
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$JOB_RESULTS" | jq --exit-status 'all(.[]; .result == "success")'
+
   release:
     name: Release
-    needs: [rust, msrv, coverage, release-regression]
+    needs: [success]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     env:
