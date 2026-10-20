@@ -113,20 +113,21 @@ The [native OCR guide](ocr.md) explains how to obtain raw readings with ocracle.
 The [pipeline gallery](https://cmeister2.github.io/whosthatpokemon/) opens a
 complete public example without requiring an upload. It follows actual runs of
 the native Rust library: source picture, detected boundaries and magicextract
-rectifications, literal ocracle title readings, indexed candidate lookup,
-shortlisted visual comparisons and the returned ranked matches, alongside
-combined identity/printing decisions. Other
-examples include a four-card scene with Counterspell, an empty scene and the
+rectifications, literal ocracle title and collector-bar readings, indexed
+candidate lookup, shortlisted visual comparisons and the returned ranked matches,
+alongside combined identity/printing decisions. Other examples include a
+four-card scene with Counterspell, an empty scene, three Secret Lair variants and the
 Christopher Rush Alpha Lightning Bolt scan. Detected cards and recorded
 orientation attempts can be inspected individually.
 
 These are production `mtg identify` results generated in a release build, not an
 interactive approximation using WebAssembly or another OCR backend. The page
-shows the real card/title PNG traces, exact OCR model provenance, retrieval
+shows the real card/title/footer PNG traces, exact OCR model provenance, retrieval
 candidates, geometric evidence and final native decisions. Failed readings,
-abstentions and conflicting orientations remain visible. A title proposes card
-identities before visual verification, and reprints do not add independent
-votes. The visual stage never falls back to checking the entire catalogue.
+abstentions and conflicting orientations remain visible. Titles propose identities
+and collector keys propose physical faces before visual verification. Reprints
+do not add independent votes. The visual stage never falls back to checking the
+entire catalogue.
 
 Stage durations were measured on the generation machine. Its CPU, source
 revision, model hash and catalogue scope appear in the run details. The scene

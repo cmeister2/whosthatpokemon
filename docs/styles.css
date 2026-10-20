@@ -280,3 +280,10 @@ h1 { font-size: clamp(30px, 3vw, 42px); font-weight: 620; line-height: 1.2; lett
   .footer-links { gap: 13px; }
 }
 @media (prefers-reduced-motion: reduce) { .stage { transition: none; } }
+
+.footer-reading, .footer-shortlist { margin-top: 18px; }
+.footer-band { position: relative; min-height: 62px; padding: 6px; margin-block: 8px; background: var(--subtle); border: 1px solid var(--line); border-radius: 4px; }
+.footer-band > img { display: block; width: 100%; max-height: 90px; object-fit: contain; image-rendering: auto; }
+.footer-input-details { margin-top: 10px; color: var(--muted); font-size: 10px; }
+.footer-input-details img { margin-block: 8px; max-height: 70px; object-fit: contain; }
+.footer-input-details p { font-size: 10px; line-height: 1.6; }

@@ -39,9 +39,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let input = sample["image"]
             .as_str()
             .ok_or_else(|| io::Error::other("sample requires an image path"))?;
-        let output = sample["report"]
-            .as_str()
-            .ok_or_else(|| io::Error::other("sample requires a report path"))?;
+        // Samples without a report path belong only to the native gallery.
+        let Some(output) = sample["report"].as_str() else {
+            continue;
+        };
         let cropped = sample["cropped"].as_bool().unwrap_or(false);
         let report = engine.scan_report(&fs::read(site.join(input))?, cropped)?;
         let output = site.join(output);

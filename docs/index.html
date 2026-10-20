@@ -21,7 +21,7 @@
         <div class="intro-copy">
           <p class="eyebrow">Native pipeline gallery</p>
           <h1 id="page-heading">From picture to card.</h1>
-          <p>Follow real runs of the Rust library: find a card in a picture, read its name with ocracle, narrow the search, and confirm the image. The first example is ready to explore.</p>
+          <p>Follow real runs of the Rust library: find a card in a picture, read its title and collector bar with ocracle, narrow the search, and confirm the image. The first example is ready to explore.</p>
         </div>
         <div class="total-summary" aria-label="Measured processing time">
           <span class="summary-label">Native scene total</span>
@@ -77,8 +77,8 @@
 
           <article id="stage-ocr" class="stage ocr-stage" data-state="waiting" aria-labelledby="ocr-heading">
             <div class="stage-meta"><span class="step-number">03</span><span id="timing-ocr" class="stage-time">—</span></div>
-            <h3 id="ocr-heading">Read the title</h3>
-            <p class="stage-description">Read the name from the small title band using OCR.</p>
+            <h3 id="ocr-heading">Read title &amp; footer</h3>
+            <p class="stage-description">Read both the title and collector bar on every orientation attempt.</p>
             <div class="stage-body">
               <div class="title-band">
                 <img id="title-image" alt="Exact title crop supplied to native ocracle" hidden>
@@ -86,6 +86,13 @@
               </div>
               <div class="reading-arrow" aria-hidden="true">↓</div>
               <div class="ocr-output"><span class="small-label">Literal OCR output</span><p id="ocr-text" class="ocr-text">Waiting for text…</p><span id="ocr-confidence" class="ocr-confidence"></span></div>
+              <div class="footer-reading">
+                <span class="small-label">Collector bar</span>
+                <div class="footer-band"><img id="footer-image" alt="Actual collector bar supplied to footer OCR" hidden><div id="footer-placeholder" class="image-placeholder">Collector bar</div></div>
+                <div class="ocr-output"><span class="small-label">Literal footer OCR</span><p id="footer-text" class="ocr-text">Waiting for text…</p></div>
+                <p id="ocr-timing-breakdown" class="stage-caption"></p>
+                <details class="footer-input-details"><summary>Footer model input</summary><img id="footer-input-image" alt="Actual footer rows arranged side by side for one recognition call" hidden><p>Printed rows are arranged side by side for one OCR call. The literal output is retained.</p></details>
+              </div>
               <div id="attempt-tabs" class="attempt-tabs" aria-label="Inspect native orientation attempts"></div>
               <p id="orientation-note" class="stage-caption"></p>
             </div>
@@ -95,11 +102,12 @@
           <article id="stage-lookup" class="stage lookup-stage" data-state="waiting" aria-labelledby="lookup-heading">
             <div class="stage-meta"><span class="step-number">04</span><span id="timing-lookup" class="stage-time">—</span></div>
             <h3 id="lookup-heading">Look up candidates</h3>
-            <p class="stage-description">Search indexed names to propose a few likely card identities.</p>
+            <p class="stage-description">Use indexed names and collector keys to retrieve likely identities and printings.</p>
             <div class="stage-body">
-              <div class="shortlist-summary"><span id="shortlist-count" class="shortlist-count">—</span><span>in the title shortlist</span></div>
+              <div class="shortlist-summary"><span id="shortlist-count" class="shortlist-count">—</span><span>title identities</span></div>
               <ol id="shortlist-list" class="shortlist-list"><li class="empty-state">Waiting for the title lookup…</li></ol>
-              <p class="stage-caption">Small reading errors are allowed. Reprints share one identity; they do not add votes.</p>
+              <div class="footer-shortlist"><span class="small-label">Collector candidates · <span id="footer-shortlist-count">0</span></span><ol id="footer-shortlist-list" class="shortlist-list"><li class="empty-state">Waiting for the collector lookup…</li></ol></div>
+              <p class="stage-caption">Titles allow small reading errors; collector keys use exact indexed matches. Reprints share one identity.</p>
             </div>
             <div class="stage-footer"><span class="stage-state">Bounded shortlist</span><span class="stage-arrow" aria-hidden="true">→</span></div>
           </article>
@@ -134,7 +142,7 @@
 
     <footer class="site-footer wrap">
       <div class="footer-links"><a href="https://github.com/cmeister2/whosthatpokemon">Source</a><a href="https://github.com/cmeister2/magicextract">magicextract</a><a href="https://github.com/cmeister2/ocracle">ocracle</a><a href="https://scryfall.com/docs/api">Scryfall</a></div>
-      <p class="art-attribution">Magic: The Gathering content and card images © Wizards of the Coast. Reference images and metadata from Scryfall. Examples are public rendered scenes, not photographs of a physical collection. This project is not affiliated with Wizards of the Coast.</p>
+      <p class="art-attribution">Magic: The Gathering content and card images © Wizards of the Coast. Reference images and metadata from Scryfall. Examples use public rendered scenes and canonical scans. This project is not affiliated with Wizards of the Coast.</p>
     </footer>
 
   </body>

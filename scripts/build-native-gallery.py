@@ -127,6 +127,8 @@ def build(args):
                 for attempt_number, attempt in enumerate(card["attempts"]):
                     attempt["ocr_image"] = f"{prefix}-attempt-{attempt_number}-title.png"
                     attempt["oriented_image"] = f"{prefix}-attempt-{attempt_number}-oriented.png"
+                    attempt["footer_image"] = f"{prefix}-attempt-{attempt_number}-footer.png"
+                    attempt["footer_input_image"] = f"{prefix}-attempt-{attempt_number}-footer-input.png"
             gallery["samples"].append({**sample, "result": result,
                                         "initialization_ms": native["initialization_ms"],
                                         "title_source": native["title_source"]})
@@ -147,7 +149,7 @@ def main():
     parser.add_argument("--binary", type=Path, required=True, help="Release whosthatpokemon binary with ocr enabled")
     parser.add_argument("--cache", type=Path, required=True, help="Public resource cache from fetch-page-resources.py")
     parser.add_argument("--model-root", type=Path, help="Existing ocracle model root; defaults to CACHE/ocracle")
-    parser.add_argument("--index", type=Path, help="Existing native shard index; defaults to the 28 public references")
+    parser.add_argument("--index", type=Path, help="Existing native shard index; defaults to the manifest's curated public references")
     parser.add_argument("--output", type=Path, required=True, help="Empty deployment directory outside docs")
     build(parser.parse_args())
 

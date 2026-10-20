@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MAX_GALLERY_REFERENCES = 128
 MODEL_REVISION = "db2911eca9fdcd0ccbd93135c516133fefd7d3ad"
 MODEL_ASSETS = (
     {
@@ -176,8 +177,10 @@ def main():
         parser.error("--cache must be outside the published docs directory")
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     references = manifest["references"]
-    if len(references) != 28 or manifest.get("catalog_count") != len(references):
-        raise ValueError("The curated public gallery requires exactly 28 reference printings")
+    if (not isinstance(references, list) or not 1 <= len(references) <= MAX_GALLERY_REFERENCES
+            or type(manifest.get("catalog_count")) is not int
+            or manifest["catalog_count"] != len(references)):
+        raise ValueError(f"The public gallery requires 1–{MAX_GALLERY_REFERENCES} explicitly listed reference printings with a matching catalog_count")
     seen = set()
     for card in references:
         identifier = card["id"]

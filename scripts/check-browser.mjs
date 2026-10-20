@@ -12,6 +12,8 @@ assert.equal(manifest.catalog_count, manifest.references.length);
 const engine = new BrowserEngine((await load(manifest.index)).toString());
 try {
   for (const sample of manifest.samples) {
+    // Native-only gallery examples have no legacy visual scan report.
+    if (!sample.report) continue;
     const recorded = JSON.parse(await load(sample.report));
     const actual = JSON.parse(engine.scan(await load(sample.image), sample.cropped));
     assert.equal(actual.cards.length, sample.provenance.expected_card_count, sample.id);
