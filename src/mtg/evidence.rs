@@ -11,8 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::CardMetadata;
 
+mod footer;
 mod index;
 
+pub use footer::{FooterIndex, FooterProposer};
 pub use index::{TextIndex, TitleIdentityMatch, TitleIdentityProposal, TitleIndex, TitleProposer};
 
 /// Manually selected conventional portrait frame geometry.
@@ -90,7 +92,7 @@ pub struct TextMatch {
     pub rules_similarity: Option<f32>,
     /// Fraction of weighted reference rules recovered in the observed body text.
     pub rules_coverage: Option<f32>,
-    /// Whether both a set code and complete collector-number token occur exactly.
+    /// Whether an indexed set/collector pair matched, including documented aliases in `reasons`.
     pub footer_match: bool,
     /// Whether one recognizable footer language token agrees with this printing.
     pub language_match: Option<bool>,
@@ -116,14 +118,9 @@ pub fn search<'a>(
 ) -> Vec<TextMatch> {
     let cards: Vec<_> = cards.into_iter().collect();
     let title = normalize(&observations.title.chars().take(512).collect::<String>());
-    let footer = tokens(&observations.footer.chars().take(2048).collect::<String>());
+    let footer = tokens(&footer_lookup_text(&observations.footer));
     let collector_numbers = collector_tokens(&observations.footer);
-    let languages: Vec<_> = [
-        "en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht",
-    ]
-    .into_iter()
-    .filter(|code| footer.iter().any(|token| token == code))
-    .collect();
+    let languages = footer_languages(footer.iter().map(String::as_str));
     let rules = rule_tokens(&observations.rules.chars().take(16_384).collect::<String>());
     let enough_rules = rules.len() >= 4 && rules.iter().map(String::len).sum::<usize>() >= 20;
     let weights = if enough_rules {
@@ -281,6 +278,37 @@ fn tokens(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Interpret documented printed language codes without changing literal OCR text.
+fn footer_language_code(token: &str) -> Option<&'static str> {
+    match token {
+        "en" => Some("en"),
+        "de" => Some("de"),
+        "fr" => Some("fr"),
+        "it" => Some("it"),
+        "es" => Some("es"),
+        "pt" => Some("pt"),
+        "ja" | "jp" => Some("ja"),
+        "ko" | "kr" => Some("ko"),
+        "zhs" | "cs" => Some("zhs"),
+        "zht" | "ct" => Some("zht"),
+        "ru" => Some("ru"),
+        _ => None,
+    }
+}
+
+/// Deduplicate printed and canonical spellings of each recognized language.
+fn footer_languages<'a>(tokens: impl IntoIterator<Item = &'a str>) -> Vec<&'static str> {
+    let mut languages = Vec::new();
+    for token in tokens {
+        if let Some(language) = footer_language_code(token)
+            && !languages.contains(&language)
+        {
+            languages.push(language);
+        }
+    }
+    languages
+}
+
 /// Remove mana symbols and parenthesized reminder text before rules comparison.
 fn rule_tokens(text: &str) -> Vec<String> {
     let mut depth = 0_u32;
@@ -321,7 +349,7 @@ fn normalize_collector(text: &str) -> String {
 
 /// Read collector numerators without treating denominators or copyright years as keys.
 fn collector_tokens(text: &str) -> Vec<String> {
-    let bounded: String = text.chars().take(2048).collect();
+    let bounded = footer_lookup_text(text);
     let characters: Vec<_> = bounded.chars().collect();
     let compact: String = characters
         .iter()
@@ -364,7 +392,91 @@ fn collector_tokens(text: &str) -> Vec<String> {
             }
         }
     }
+    // Recent Secret Lair collectors overlap the copyright-year range. Accept
+    // those bare four-digit tokens only in the documented collector/set column
+    // order, before any copyright marker. A set beside a copyright row cannot
+    // turn that row's year into a collector key.
+    let before_copyright = bounded.split('©').next().unwrap_or_default();
+    let words = tokens(before_copyright);
+    for (position, token) in words.iter().enumerate() {
+        if token.len() != 4
+            || !token
+                .parse::<u32>()
+                .is_ok_and(|number| (1900..=2099).contains(&number))
+        {
+            continue;
+        }
+        let secret_set = |value: Option<&String>| {
+            value.is_some_and(|value| matches!(value.as_str(), "sld" | "slx"))
+        };
+        let rarity = |value: Option<&String>| {
+            value.is_some_and(|value| matches!(value.as_str(), "c" | "u" | "r" | "m" | "p" | "t"))
+        };
+        let followed_by_set = secret_set(words.get(position + 1))
+            || (rarity(words.get(position + 1)) && secret_set(words.get(position + 2)));
+        let after_set_with_language = position > 0
+            && secret_set(words.get(position - 1))
+            && words
+                .get(position + 1)
+                .is_some_and(|value| footer_language_code(value).is_some());
+        if (followed_by_set || after_set_with_language) && !result.contains(token) {
+            result.push(token.clone());
+        }
+    }
     result
+}
+
+/// Exclude counterpart annotations from exact footer keys while retaining literal OCR elsewhere.
+///
+/// Universes Within footers can show `001 M =SLD340` above their real `SLX EN`
+/// set row. OCR composition can put both rows on one line, so only the counterpart
+/// reference is removed; the subsequent physical set/language fields survive.
+fn footer_lookup_text(text: &str) -> String {
+    let bounded: String = text.chars().take(2048).collect();
+    let mut remaining = bounded.as_str();
+    let mut result = String::with_capacity(bounded.len());
+    while let Some(marker) = remaining.find('=') {
+        result.push_str(&remaining[..marker]);
+        let annotation = &remaining[marker + 1..];
+        if let Some(length) = counterpart_annotation_length(annotation) {
+            result.push(' ');
+            remaining = &annotation[length..];
+        } else {
+            // Unknown annotations retain the previous conservative boundary:
+            // they cannot introduce arbitrary keys from the rest of this row.
+            remaining = annotation.find('\n').map_or("", |line| &annotation[line..]);
+        }
+    }
+    result.push_str(remaining);
+    result
+}
+
+/// Length of a documented SLD counterpart reference, without consuming following physical fields.
+fn counterpart_annotation_length(text: &str) -> Option<usize> {
+    let trimmed = text.trim_start_matches([' ', '\t']);
+    if !trimmed
+        .get(..3)
+        .is_some_and(|code| code.eq_ignore_ascii_case("sld"))
+    {
+        return None;
+    }
+    let number = trimmed[3..].trim_start_matches([' ', '\t']);
+    let digits = number.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let mut length = text.len() - number.len() + digits;
+    if let Some(suffix) = text[length..].chars().next()
+        && (matches!(suffix, '★' | 'Φ' | 'φ')
+            || (matches!(suffix, 'a' | 'b' | 'A' | 'B')
+                && text[length + suffix.len_utf8()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|next| !next.is_alphabetic())))
+    {
+        length += suffix.len_utf8();
+    }
+    Some(length)
 }
 
 /// Preserve numeric suffixes while removing insignificant collector zero padding.

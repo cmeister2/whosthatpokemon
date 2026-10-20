@@ -454,6 +454,38 @@ pub(super) fn recognize_candidates_with(
     candidate_options: &CandidateOptions,
     candidates: &[CardMetadata],
 ) -> Result<CandidateRecognition, Error> {
+    recognize_selected_with(index, image, options, candidate_options, candidates, true)
+}
+
+/// Verify only explicit physical-face proposals while preserving candidate-scope accounting.
+///
+/// # Errors
+///
+/// Returns an error for invalid options/input or unavailable selected records.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn recognize_faces_with(
+    index: &impl CandidateSource,
+    image: &DynamicImage,
+    options: &MatchOptions,
+    candidate_options: &CandidateOptions,
+    candidates: &[CardMetadata],
+) -> Result<CandidateRecognition, Error> {
+    recognize_selected_with(index, image, options, candidate_options, candidates, false)
+}
+
+/// Share bounded descriptor and geometry verification across explicit and expanded proposals.
+///
+/// # Errors
+///
+/// Returns an error for invalid options/input or unavailable selected records.
+fn recognize_selected_with(
+    index: &impl CandidateSource,
+    image: &DynamicImage,
+    options: &MatchOptions,
+    candidate_options: &CandidateOptions,
+    candidates: &[CardMetadata],
+    expand_related: bool,
+) -> Result<CandidateRecognition, Error> {
     let total_started = Instant::now();
     let mut timings = CandidateTimings::default();
     options.validate()?;
@@ -461,7 +493,12 @@ pub(super) fn recognize_candidates_with(
     validate_image(image)?;
 
     let stage_started = Instant::now();
-    let selection = select_candidates(index, candidates, candidate_options.max_descriptors)?;
+    let selection = select_candidates(
+        index,
+        candidates,
+        candidate_options.max_descriptors,
+        expand_related,
+    )?;
     timings.candidate_selection = stage_started.elapsed().as_secs_f64() * 1_000.0;
     if selection.descriptors.is_empty() {
         timings.total = total_started.elapsed().as_secs_f64() * 1_000.0;
@@ -651,15 +688,23 @@ pub(super) fn recognize_candidates_with(
     Ok(result)
 }
 
-/// Expand exact face, semantic identity and illustration postings without a gallery scan.
+/// Resolve physical faces and optional related postings without a gallery scan.
 fn select_candidates(
     index: &impl CandidateSource,
     proposals: &[CardMetadata],
     max_candidates: usize,
+    expand_related: bool,
 ) -> Result<CandidateSelection, Error> {
     let matches = proposals
         .iter()
-        .map(|proposal| index.candidate_matches(proposal))
+        .map(|proposal| {
+            let mut found = index.candidate_matches(proposal)?;
+            if !expand_related {
+                found.identity.clear();
+                found.illustration.clear();
+            }
+            Ok(found)
+        })
         .collect::<Result<Vec<_>, Error>>()?;
     let matched_proposals = matches
         .iter()

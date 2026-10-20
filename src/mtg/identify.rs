@@ -1,8 +1,9 @@
 //! Combine independent text proposals with actual, explicitly scoped image evidence.
 //!
-//! Title, rules and footer searches each retain their own five printing results.
-//! Their union proposes geometry candidates; a high footer score cannot replace
-//! a title or rules proposal. Text scores never become visual confidence.
+//! Exhaustive text search retains independent title, rules and footer results.
+//! The live indexed route combines bounded title identities with complete exact
+//! footer postings. A footer cannot erase contradictory title evidence, and text
+//! scores never become visual confidence.
 //! The thresholds below are conservative policy choices, not learned weights or
 //! calibrated probabilities. Complete visual decisions remain distinct from a
 //! geometrically verified shortlist whose omitted geometry is still unknown.
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 use super::evidence::{
-    TextIndex, TextMatch, TextObservations, TitleIdentityProposal, TitleProposer,
+    FooterProposer, TextIndex, TextMatch, TextObservations, TitleIdentityProposal, TitleProposer,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::matching::{CandidateOptions, CandidateOrientations, ShardedIndex, ShortlistOptions};
@@ -46,7 +47,7 @@ pub struct TextCandidates {
     pub title: Vec<TextMatch>,
     /// At most five printings retrieved using only the observed rules.
     pub rules: Vec<TextMatch>,
-    /// At most five printings retrieved using only the observed collector footer.
+    /// Exact collector-footer printings; indexed field retrieval retains every match.
     pub footer: Vec<TextMatch>,
     /// Visual proposals deduplicated by game, printing and face.
     ///
@@ -147,6 +148,39 @@ pub fn collect_title_candidates<T: TitleProposer + ?Sized>(
     }
 }
 
+/// Merge bounded title identities with complete indexed collector-footer proposals.
+///
+/// Footer lookup requires an exact set and complete collector token. All matching
+/// faces are retained so language or identity ambiguity cannot disappear behind
+/// a result limit. Exact footer faces precede title representatives in the visual
+/// hint list; the matcher reserves supplied physical faces before expanding their
+/// identity and illustration postings. Language-conflicting matches remain in
+/// the evidence but do not propose new image candidates.
+#[must_use]
+pub fn collect_field_candidates<T: TitleProposer + ?Sized, F: FooterProposer + ?Sized>(
+    title_index: &T,
+    footer_index: &F,
+    observations: &TextObservations,
+    max_title_identities: usize,
+) -> TextCandidates {
+    let mut text = collect_title_candidates(title_index, &observations.title, max_title_identities);
+    text.footer = footer_index.propose_footer_printings(&observations.footer);
+    let mut hints = Vec::new();
+    for card in text
+        .footer
+        .iter()
+        .filter(|hit| hit.footer_match && hit.language_match != Some(false))
+        .map(|hit| &hit.card)
+        .chain(text.hints.iter())
+    {
+        if !hints.iter().any(|existing| same_face(existing, card)) {
+            hints.push(card.clone());
+        }
+    }
+    text.hints = hints;
+    text
+}
+
 /// A semantic identity, explicitly separate from any accepted physical printing.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct CardIdentity {
@@ -194,7 +228,7 @@ pub enum EvidenceSource {
 pub enum CombinedStatus {
     /// A complete visual decision survived material text-conflict checks.
     Matched,
-    /// Actual geometry and nonfooter text agree within the stated candidate scope.
+    /// Actual geometry and independent text agree within the stated candidate scope.
     ///
     /// Omitted geometry remains unknown; this is not an exact full-gallery match.
     VerifiedShortlist,
@@ -286,7 +320,7 @@ pub struct CombinedRecognition {
 /// that OCR did not propose.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct CandidateIdentificationTimings {
-    /// Retrieve and materialize bounded semantic title proposals.
+    /// Retrieve bounded semantic title proposals and any indexed footer faces.
     pub text_retrieval: f64,
     /// Candidate-scoped descriptor and geometric image matching.
     pub visual_matching: f64,
@@ -296,7 +330,25 @@ pub struct CandidateIdentificationTimings {
     pub total: f64,
 }
 
-/// Candidate-scoped title and image evidence with its combined decision.
+/// Final visual search actually represented by candidate identification.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateVisualStrategy {
+    /// Indexed title/footer identity and illustration closure under the normal budgets.
+    #[default]
+    ExpandedTextCandidates,
+    /// Only all compatible physical faces from exact collector-footer postings.
+    ExactFooterFaces,
+}
+
+impl CandidateVisualStrategy {
+    /// Omit the legacy default so title-only serialized results remain compatible.
+    fn is_default(&self) -> bool {
+        *self == Self::ExpandedTextCandidates
+    }
+}
+
+/// Candidate-scoped title/footer and image evidence with its combined decision.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CandidateIdentification {
     /// Original literal observations supplied by the OCR stage.
@@ -314,6 +366,23 @@ pub struct CandidateIdentification {
     /// Non-overlapping wall-clock stages for indexed retrieval, vision and fusion.
     #[serde(default)]
     pub timings: CandidateIdentificationTimings,
+}
+
+/// Indexed title/footer identification with explicit visual-pass diagnostics.
+///
+/// The shared result is flattened for JSON consumers while the existing
+/// [`CandidateIdentification`] Rust structure and title-only APIs remain intact.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FieldIdentification {
+    /// Literal observations, scoped visual evidence and combined decisions.
+    #[serde(flatten)]
+    pub result: CandidateIdentification,
+    /// Final visual pass; exact-footer scoring does not search unrelated printings.
+    #[serde(default, skip_serializing_if = "CandidateVisualStrategy::is_default")]
+    pub visual_strategy: CandidateVisualStrategy,
+    /// Earlier unsuccessful exact-footer pass, when expanded text verification followed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer_verification: Option<CandidateRecognition>,
 }
 
 /// Search independent text proposals and verify their union with visual candidates.
@@ -431,6 +500,122 @@ pub fn identify_title_with<T: TitleProposer + ?Sized>(
         total: total_started.elapsed().as_secs_f64() * 1_000.0,
     };
     Ok(result)
+}
+
+/// Verify exact collector-footer faces before expanding title and footer identities.
+///
+/// Both independently observed text channels participate in indexed retrieval;
+/// this also supports stylized or unreadable titles. No complete-gallery scoring
+/// is performed. A footer can corroborate semantic identity only
+/// after actual geometry agrees, every candidate group is covered, its compatible
+/// exact matches resolve one identity, and no strong text channel contradicts
+/// that identity. Footer-only corroboration additionally requires the same verified
+/// face's whole-card descriptor to meet the absolute image threshold, because
+/// altered artwork can retain a different semantic card's printed footer.
+/// Exact printing and global confidence retain their visual scope.
+///
+/// # Errors
+///
+/// Returns an error for invalid budgets/options/input, unavailable selected visual
+/// records or matching failure. Indexes are reused; no image or model is downloaded.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+pub fn identify_fields_with<T: TitleProposer + ?Sized, F: FooterProposer + ?Sized>(
+    visual_index: &ShardedIndex,
+    title_index: &T,
+    footer_index: &F,
+    image: &DynamicImage,
+    observations: &TextObservations,
+    match_options: &MatchOptions,
+    max_title_identities: usize,
+    candidate_options: &CandidateOptions,
+) -> Result<FieldIdentification, Error> {
+    let total_started = Instant::now();
+    match_options.validate()?;
+    candidate_options.validate()?;
+    if max_title_identities == 0 {
+        return Err(Error::InvalidOptions(
+            "title identity budget must be positive".into(),
+        ));
+    }
+    let stage_started = Instant::now();
+    let text = collect_field_candidates(
+        title_index,
+        footer_index,
+        observations,
+        max_title_identities,
+    );
+    let text_retrieval = stage_started.elapsed().as_secs_f64() * 1_000.0;
+    let footer_faces: Vec<_> = text
+        .footer
+        .iter()
+        .filter(|hit| hit.footer_match && hit.language_match != Some(false))
+        .map(|hit| hit.card.clone())
+        .collect();
+    let mut visual_matching = 0.0;
+    let mut fusion = 0.0;
+    let mut footer_verification = None;
+    if !footer_faces.is_empty() {
+        let stage_started = Instant::now();
+        let visual = visual_index.recognize_faces_with(
+            image,
+            match_options,
+            candidate_options,
+            &footer_faces,
+        )?;
+        visual_matching += stage_started.elapsed().as_secs_f64() * 1_000.0;
+        let stage_started = Instant::now();
+        let mut result = combine_candidates(observations, text.clone(), visual, match_options)?;
+        fusion += stage_started.elapsed().as_secs_f64() * 1_000.0;
+        if result.identity.card.is_some()
+            && matches!(
+                result.identity.status,
+                CombinedStatus::Matched | CombinedStatus::VerifiedShortlist
+            )
+            && result.identity.sources.contains(&EvidenceSource::Footer)
+            && result
+                .visual
+                .geometry_verified
+                .iter()
+                .any(|verified| verified.similarity >= match_options.min_similarity)
+        {
+            result.identity.reason = "Independent text and verified image evidence agree within the exact-footer physical-face candidates; other printings and identities remain outside this visual search scope.".into();
+            result.timings = CandidateIdentificationTimings {
+                text_retrieval,
+                visual_matching,
+                fusion,
+                total: total_started.elapsed().as_secs_f64() * 1_000.0,
+            };
+            return Ok(FieldIdentification {
+                result,
+                visual_strategy: CandidateVisualStrategy::ExactFooterFaces,
+                footer_verification: None,
+            });
+        }
+        footer_verification = Some(result.visual);
+    }
+    let stage_started = Instant::now();
+    let visual = visual_index.recognize_candidates_with(
+        image,
+        match_options,
+        candidate_options,
+        &text.hints,
+    )?;
+    visual_matching += stage_started.elapsed().as_secs_f64() * 1_000.0;
+    let stage_started = Instant::now();
+    let mut result = combine_candidates(observations, text, visual, match_options)?;
+    fusion += stage_started.elapsed().as_secs_f64() * 1_000.0;
+    result.timings = CandidateIdentificationTimings {
+        text_retrieval,
+        visual_matching,
+        fusion,
+        total: total_started.elapsed().as_secs_f64() * 1_000.0,
+    };
+    Ok(FieldIdentification {
+        result,
+        visual_strategy: CandidateVisualStrategy::default(),
+        footer_verification,
+    })
 }
 
 /// Apply the same conflict-aware identity policy to already collected candidate evidence.
@@ -555,7 +740,11 @@ fn field_evidence(text: &TextCandidates) -> [FieldEvidence; 3] {
                 && hit.rules_coverage.is_some_and(|score| score >= coverage)
         }))
     };
-    let footer = unique_identities(text.footer.iter().filter(|hit| hit.footer_match));
+    let footer = unique_identities(
+        text.footer
+            .iter()
+            .filter(|hit| hit.footer_match && hit.language_match != Some(false)),
+    );
     [
         FieldEvidence {
             source: EvidenceSource::Title,
@@ -640,9 +829,37 @@ fn combine(
         && let Some(best) = combined
     {
         let strong_conflict = fields.iter().any(|field| field.contradicts(&best.card));
+        let nonfooter_support = fields[..2].iter().any(|field| {
+            if visual.scope == ShortlistScope::SuppliedCandidates {
+                field.corroborates(&best.card)
+            } else {
+                field.supports(&best.card, false)
+            }
+        });
+        // Reused or altered artwork can preserve the original collector footer
+        // while changing the semantic card. When a footer supplies the only text
+        // corroboration, artwork homography alone is insufficient: the same
+        // verified face must also pass the existing whole-card descriptor gate.
+        let footer_global_agrees = visual.geometry_verified.iter().any(|verification| {
+            same_identity(&verification.card, &best.card)
+                && verification.similarity >= options.min_similarity
+                && verification.global_similarity >= options.min_similarity
+        });
+        let footer_support = visual.scope == ShortlistScope::SuppliedCandidates
+            && fields[2].supports(&best.card, false)
+            && !strong_conflict
+            && footer_global_agrees;
+        let verified = visual.geometry_verified.iter().any(|verification| {
+            same_identity(&verification.card, &best.card)
+                && verification.similarity >= options.min_similarity
+        });
+        let footer_needs_geometry = visual.scope == ShortlistScope::SuppliedCandidates
+            && !text.footer.is_empty()
+            && !nonfooter_support;
         if visual.search_complete
             && visual.recognition.identity_status == MatchStatus::Matched
             && !strong_conflict
+            && (!footer_needs_geometry || (footer_support && verified))
         {
             let geometry_verified = visual
                 .geometry_verified
@@ -672,23 +889,17 @@ fn combine(
             );
             accepted = Some((&visual.recognition, visual.scope));
         } else {
-            let verified = visual.geometry_verified.iter().any(|verification| {
-                same_identity(&verification.card, &best.card)
-                    && verification.similarity >= options.min_similarity
-            });
             let sufficient_margin =
                 sufficient_lead(best.similarity, visual.combined_identity_margin, options);
-            let nonfooter_support = fields[..2].iter().any(|field| {
-                if visual.scope == ShortlistScope::SuppliedCandidates {
-                    field.corroborates(&best.card)
-                } else {
-                    field.supports(&best.card, false)
-                }
-            });
             let groups_covered = visual.omitted_hint_groups == 0
                 && visual.omitted_visual_groups == 0
                 && (visual.scope != ShortlistScope::SuppliedCandidates || !visual.budget_exhausted);
-            if verified && sufficient_margin && nonfooter_support && groups_covered {
+            if verified
+                && sufficient_margin
+                && (nonfooter_support || footer_support)
+                && groups_covered
+                && (visual.scope != ShortlistScope::SuppliedCandidates || !strong_conflict)
+            {
                 let mut sources = vec![EvidenceSource::VisualGeometry];
                 if visual.scope == ShortlistScope::SuppliedCandidates {
                     append_corroborating_sources(&mut sources, &fields, &best.card);
@@ -704,7 +915,9 @@ fn combine(
                     },
                     visual.scope,
                     sources,
-                    if visual.search_complete {
+                    if footer_support && !nonfooter_support {
+                        "Actual geometry, whole-card appearance and an unambiguous exact collector footer agree within every supplied candidate group; identities outside this indexed candidate scope remain untested."
+                    } else if visual.search_complete {
                         "Actual geometry and independent nonfooter text resolve the complete visual ranking."
                     } else if visual.scope == ShortlistScope::SuppliedCandidates {
                         "Actual geometry and independent nonfooter text agree with the winner and margin among every supplied candidate group; identities not proposed by OCR remain untested."
@@ -729,7 +942,7 @@ fn combine(
             identity.reason = "Strong evidence proposes contradictory identities; image verification, corroboration or competitor separation is insufficient to resolve them.".into();
         } else if strong_image {
             identity.status = CombinedStatus::Ambiguous;
-            identity.reason = "Plausible image evidence remains, but identity separation, verified nonfooter corroboration or candidate coverage is insufficient.".into();
+            identity.reason = "Plausible image evidence remains, but identity separation, verified text corroboration or candidate coverage is insufficient.".into();
         }
     }
     let printing = printing_decision(accepted, &identity, &visual, options);
@@ -798,6 +1011,9 @@ fn append_corroborating_sources(
         if field.corroborates(card) {
             sources.push(field.source);
         }
+    }
+    if fields[2].supports(card, false) {
+        sources.push(EvidenceSource::Footer);
     }
 }
 

@@ -12,8 +12,9 @@ use crate::{CardMetadata, Error};
 use crate::matching::ShardedIndex;
 
 use super::{
-    TextMatch, TextObservations, collector_tokens, edit_similarity_characters, make_match,
-    match_score, normalize, normalize_collector, normalize_number, rule_tokens, tokens,
+    TextMatch, TextObservations, collector_tokens, edit_similarity_characters, footer_languages,
+    footer_lookup_text, make_match, match_score, normalize, normalize_collector, normalize_number,
+    rule_tokens, tokens,
 };
 
 mod codec;
@@ -261,17 +262,11 @@ impl TextIndex {
     pub fn search(&self, observations: &TextObservations) -> Vec<TextMatch> {
         let title = normalize(&observations.title.chars().take(512).collect::<String>());
         let title: Vec<_> = title.chars().take(1024).collect();
-        let footer: HashSet<_> =
-            tokens(&observations.footer.chars().take(2048).collect::<String>())
-                .into_iter()
-                .collect();
+        let footer: HashSet<_> = tokens(&footer_lookup_text(&observations.footer))
+            .into_iter()
+            .collect();
         let collector: HashSet<_> = collector_tokens(&observations.footer).into_iter().collect();
-        let languages: Vec<_> = [
-            "en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht",
-        ]
-        .into_iter()
-        .filter(|code| footer.contains(*code))
-        .collect();
+        let languages = footer_languages(footer.iter().map(String::as_str));
         let query_rules = rule_tokens(&observations.rules.chars().take(16_384).collect::<String>());
         let enough_rules =
             query_rules.len() >= 4 && query_rules.iter().map(String::len).sum::<usize>() >= 20;
@@ -426,24 +421,21 @@ impl TextIndex {
     /// only matching records are materialized. When exactly one supported language
     /// token is present, matching-language records rank first while conflicting
     /// records remain visible. `limit` counts physical printing/face records.
+    /// Set and collector fields must be separate tokens; [`super::FooterIndex`]
+    /// supports additional glued fields and documented printed-number aliases.
     #[must_use]
     pub fn search_footer_printings(&self, observed_footer: &str, limit: usize) -> Vec<TextMatch> {
         if limit == 0 {
             return Vec::new();
         }
-        let footer: HashSet<_> = tokens(&observed_footer.chars().take(2048).collect::<String>())
+        let footer: HashSet<_> = tokens(&footer_lookup_text(observed_footer))
             .into_iter()
             .collect();
         let collectors: HashSet<_> = collector_tokens(observed_footer).into_iter().collect();
         if footer.is_empty() || collectors.is_empty() {
             return Vec::new();
         }
-        let languages: Vec<_> = [
-            "en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht",
-        ]
-        .into_iter()
-        .filter(|code| footer.contains(*code))
-        .collect();
+        let languages = footer_languages(footer.iter().map(String::as_str));
         let sets: Vec<_> = footer
             .iter()
             .filter_map(|set| self.footer_sets.get(set).copied())

@@ -759,3 +759,52 @@ fn portable_candidate_adapter_matches_binary_storage() {
         assert_eq!(portable, native);
     }
 }
+
+/// An exact collector proposal must not read a related printing's descriptor shard.
+#[test]
+fn exact_footer_faces_do_not_expand_related_printings_or_artwork() {
+    let directory = Directory::new();
+    let wanted = card("wanted-footer-face", "shared", "same-art");
+    let related = card("unsearched-related", "shared", "same-art");
+    let (_, index) = gallery(&directory, &[(wanted.clone(), 3), (related, 7)]);
+    fs::remove_file(directory.0.join("shard-000001.global.bin")).unwrap();
+    fs::remove_file(directory.0.join("shard-000001.local.bin")).unwrap();
+    let result = index
+        .recognize_faces_with(
+            &image(3),
+            &MatchOptions::default(),
+            &CandidateOptions::default(),
+            std::slice::from_ref(&wanted),
+        )
+        .unwrap();
+    assert_eq!(result.candidate_count, 1);
+    assert_eq!(result.descriptors_scored, 1);
+    assert_eq!(result.geometry_attempted, 1);
+    assert_eq!(result.geometry_verified_count, 1);
+    assert_eq!(result.recognition.candidates[0].card.id, wanted.id);
+    assert!(!result.search_complete);
+    assert_eq!(result.scope, ShortlistScope::SuppliedCandidates);
+    assert_eq!(result.recognition.confidence, 0.0);
+}
+
+/// A missing exact printing cannot be replaced by another printing of its identity.
+#[test]
+fn exact_footer_face_requires_the_enrolled_physical_key() {
+    let directory = Directory::new();
+    let present = card("present", "shared", "same-art");
+    let (_, index) = gallery(&directory, &[(present, 3)]);
+    fs::remove_file(directory.0.join("shard-000000.global.bin")).unwrap();
+    let absent = card("absent", "shared", "same-art");
+    let result = index
+        .recognize_faces_with(
+            &image(3),
+            &MatchOptions::default(),
+            &CandidateOptions::default(),
+            &[absent],
+        )
+        .unwrap();
+    assert_eq!(result.matched_proposals, 0);
+    assert_eq!(result.descriptors_scored, 0);
+    assert!(result.recognition.candidates.is_empty());
+    assert_eq!(result.recognition.status, MatchStatus::Unknown);
+}
