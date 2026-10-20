@@ -273,6 +273,11 @@ struct IdentifyArgs {
     /// Minimum visual lead over a competing printing or identity.
     #[arg(long, default_value_t = 0.03)]
     min_margin: f32,
+    /// Write rectified crops and actual OCR input images to a new directory.
+    ///
+    /// PNG encoding and writing happen after processing and are excluded from timings.
+    #[arg(long)]
+    trace_dir: Option<PathBuf>,
     /// JSON destination; otherwise write to standard output.
     #[arg(long)]
     output: Option<PathBuf>,
@@ -1024,6 +1029,9 @@ fn run_identify(arguments: IdentifyArgs) -> Result<(), Error> {
         output_height: 700,
         ..ExtractorConfig::default()
     })?;
+    if let Some(directory) = &arguments.trace_dir {
+        fs::create_dir(directory)?;
+    }
     let recognize = |image: &image::DynamicImage, corners, area| {
         let started = Instant::now();
         let run_attempt = |rotation_degrees| {
@@ -1082,13 +1090,17 @@ fn run_identify(arguments: IdentifyArgs) -> Result<(), Error> {
         })
     };
     let mut reports = Vec::new();
-    for input in arguments.images {
+    for (image_number, input) in arguments.images.into_iter().enumerate() {
         let started = Instant::now();
         let image = open_image(&input)?;
         let decode_ms = started.elapsed().as_secs_f64() * 1000.0;
         let (width, height) = (image.width(), image.height());
         let extraction_started = Instant::now();
+        let mut trace_crops = Vec::new();
         let (cards, extraction_ms) = if arguments.cropped {
+            if arguments.trace_dir.is_some() {
+                trace_crops.push(image.clone());
+            }
             (
                 vec![recognize(
                     &image,
@@ -1108,8 +1120,12 @@ fn run_identify(arguments: IdentifyArgs) -> Result<(), Error> {
             let cards = extracted
                 .into_iter()
                 .map(|card| {
+                    let crop = image::DynamicImage::ImageRgb8(card.image);
+                    if arguments.trace_dir.is_some() {
+                        trace_crops.push(crop.clone());
+                    }
                     recognize(
-                        &image::DynamicImage::ImageRgb8(card.image),
+                        &crop,
                         card.detection.corners.map(|point| [point.x, point.y]),
                         card.detection.area,
                     )
@@ -1117,20 +1133,25 @@ fn run_identify(arguments: IdentifyArgs) -> Result<(), Error> {
                 .collect::<Result<Vec<_>, _>>()?;
             (cards, extraction_ms)
         };
-        reports.push(ImageResult {
-            input,
-            result: IdentifiedImage {
-                width,
-                height,
-                decode_ms,
-                extraction_ms,
-                total_ms: started.elapsed().as_secs_f64() * 1000.0,
-                cards,
-            },
-        });
+        let result = IdentifiedImage {
+            width,
+            height,
+            decode_ms,
+            extraction_ms,
+            total_ms: started.elapsed().as_secs_f64() * 1000.0,
+            cards,
+        };
+        if let Some(directory) = &arguments.trace_dir {
+            write_identification_trace(directory, image_number, &trace_crops, &result)?;
+        }
+        reports.push(ImageResult { input, result });
     }
     write_json(
         &serde_json::json!({
+            "build": {
+                "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
+                "crate_version": env!("CARGO_PKG_VERSION"),
+            },
             "initialization_ms": {
                 "visual_index": visual_load_ms,
                 "title_index": title_index_ms,
@@ -1141,6 +1162,78 @@ fn run_identify(arguments: IdentifyArgs) -> Result<(), Error> {
         }),
         arguments.output.as_deref(),
     )
+}
+
+/// Save the exact rectified pixels and oriented title rectangles used by identification.
+///
+/// The caller supplies a newly created directory. Files are created exclusively,
+/// preserving existing inputs even if a generated filename aliases one of them.
+/// This performs no extraction, recognition, matching or orientation selection.
+///
+/// # Errors
+///
+/// Returns an error if a trace file already exists or PNG encoding/writing fails.
+#[cfg(feature = "ocr")]
+fn write_identification_trace(
+    directory: &Path,
+    image_number: usize,
+    crops: &[image::DynamicImage],
+    result: &IdentifiedImage,
+) -> Result<(), Error> {
+    for (card_number, (crop, card)) in crops.iter().zip(&result.cards).enumerate() {
+        let prefix = format!("image-{image_number}-card-{card_number}");
+        save_trace_png(crop, &directory.join(format!("{prefix}-crop.png")))?;
+        for (attempt_number, attempt) in card.attempts.iter().enumerate() {
+            write_identification_attempt_trace(
+                directory,
+                &format!("{prefix}-attempt-{attempt_number}"),
+                crop,
+                attempt.ocr.rotation_degrees,
+                attempt.ocr.crop_bounds,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Export a recorded orientation and its actual title rectangle without choosing an orientation.
+///
+/// # Errors
+///
+/// Returns an error for an existing destination or failed PNG encoding/writing.
+#[cfg(feature = "ocr")]
+fn write_identification_attempt_trace(
+    directory: &Path,
+    prefix: &str,
+    crop: &image::DynamicImage,
+    rotation: u16,
+    bounds: [u32; 4],
+) -> Result<(), Error> {
+    let oriented = if rotation == 180 {
+        crop.rotate180()
+    } else {
+        crop.clone()
+    };
+    let [x, y, width, height] = bounds;
+    save_trace_png(
+        &oriented.crop_imm(x, y, width, height),
+        &directory.join(format!("{prefix}-title.png")),
+    )?;
+    save_trace_png(&oriented, &directory.join(format!("{prefix}-oriented.png")))
+}
+
+/// Encode one trace PNG, creating exclusively and reporting buffered write errors.
+///
+/// # Errors
+///
+/// Returns an error for an existing destination or failed PNG encoding/writing.
+#[cfg(feature = "ocr")]
+fn save_trace_png(image: &image::DynamicImage, path: &Path) -> Result<(), Error> {
+    let file = fs::File::create_new(path)?;
+    let mut writer = io::BufWriter::new(file);
+    image.write_to(&mut writer, image::ImageFormat::Png)?;
+    writer.flush()?;
+    Ok(())
 }
 
 /// Resource and recovery choices for native reference enrollment.
@@ -1399,6 +1492,38 @@ mod tests {
             &[hit(&first, 0.89)],
             &[hit(&other, 1.0)]
         ));
+    }
+
+    /// Trace images preserve upright input and show the recorded opposite orientation exactly.
+    #[cfg(feature = "ocr")]
+    #[test]
+    fn identification_trace_exports_actual_orientation_and_title_pixels() {
+        let directory = TemporaryImages::new();
+        let crop = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(2, 3, |x, y| {
+            image::Rgb([(y * 2 + x) as u8, 0, 0])
+        }));
+        write_identification_attempt_trace(&directory.0, "upright", &crop, 0, [0, 0, 2, 1])
+            .unwrap();
+        write_identification_attempt_trace(&directory.0, "inverted", &crop, 180, [0, 0, 2, 1])
+            .unwrap();
+        let upright = image::open(directory.0.join("upright-oriented.png")).unwrap();
+        assert_eq!(upright.to_rgb8(), crop.to_rgb8());
+        let title = image::open(directory.0.join("inverted-title.png"))
+            .unwrap()
+            .to_rgb8();
+        assert_eq!(title.dimensions(), (2, 1));
+        assert_eq!(title.get_pixel(0, 0).0, [5, 0, 0]);
+        assert_eq!(title.get_pixel(1, 0).0, [4, 0, 0]);
+        assert!(
+            write_identification_attempt_trace(&directory.0, "upright", &crop, 180, [0, 0, 2, 1])
+                .is_err()
+        );
+        assert_eq!(
+            image::open(directory.0.join("upright-oriented.png"))
+                .unwrap()
+                .to_rgb8(),
+            crop.to_rgb8()
+        );
     }
 
     /// Asset-directory aliases and custom registry paths cannot be result destinations.

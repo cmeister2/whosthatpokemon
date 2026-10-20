@@ -1,4 +1,4 @@
-name: Pipeline explorer
+name: Native pipeline gallery
 
 on:
   push:
@@ -8,8 +8,19 @@ on:
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "scripts/build-browser.sh"
-      - "scripts/check-browser.mjs"
+      - "scripts/build-native-gallery.py"
+      - "scripts/fetch-page-resources.py"
+      - "scripts/check-native-gallery.py"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/build-native-gallery.py"
+      - "scripts/fetch-page-resources.py"
+      - "scripts/check-native-gallery.py"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -17,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: github-pages
+  group: github-pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -26,23 +37,24 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: wasm-bindgen@0.2.129
-      - name: Compile the actual extractor and matcher for the browser
-        run: scripts/build-browser.sh
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "24"
-      - name: Exercise the built engine and public examples
-        run: node scripts/check-browser.mjs
+      - name: Prepare hash-verified public references and ocracle weights
+        run: python3 scripts/fetch-page-resources.py --cache "$RUNNER_TEMP/wtp-page-resources"
+      - name: Compile the production native identification CLI
+        run: cargo build --locked --release --features ocr --bin whosthatpokemon
+      - name: Record the actual native pipeline on each public example
+        run: >-
+          python3 scripts/build-native-gallery.py
+          --binary target/release/whosthatpokemon
+          --cache "$RUNNER_TEMP/wtp-page-resources"
+          --output "$RUNNER_TEMP/wtp-pages"
+      - name: Check native decisions, orientations, timings and trace assets
+        run: python3 scripts/check-native-gallery.py "$RUNNER_TEMP/wtp-pages"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: docs
+          path: ${{ runner.temp }}/wtp-pages
 
   deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -53,6 +65,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-      - name: Publish explorer
+      - name: Publish native gallery
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
