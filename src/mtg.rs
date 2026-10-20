@@ -7,6 +7,18 @@
 /// Portrait text regions and independent, fuzzy catalogue searches over OCR evidence.
 pub mod evidence;
 
+/// Independent OCR proposals combined with explicitly scoped visual verification.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod identify;
+
+/// Native Magic text recognition using a reusable, separately supplied OCR model.
+#[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
+pub mod ocr;
+
+/// Streaming bulk metadata preparation and resumable reference-image acquisition.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bulk;
+
 /// Explicit Scryfall metadata and reference-image downloads.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod download;
@@ -82,6 +94,45 @@ pub fn read_references(catalog_path: &Path) -> Result<Vec<Reference>, Error> {
         }
     }
     Ok(references)
+}
+
+/// Stream physical-face references without retaining a complete bulk JSON document.
+///
+/// JSON arrays, JSON Lines, gzip and complete local/Scryfall wrappers are accepted.
+/// Reference images are not loaded. Duplicate keys are checked across the whole
+/// stream; consumers should publish their output only after this call succeeds.
+///
+/// # Errors
+///
+/// Returns an error for malformed/incomplete metadata, duplicate physical faces,
+/// an empty catalogue, failed I/O or an error returned by `callback`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn for_each_reference(
+    catalog_path: &Path,
+    mut callback: impl FnMut(Reference) -> Result<(), Error>,
+) -> Result<usize, Error> {
+    let base = catalog_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut count = 0_usize;
+    let mut identities = HashSet::new();
+    bulk::for_each_card(catalog_path, |value| {
+        let mut references = Vec::new();
+        append_value(value, base, &mut references)?;
+        for reference in references {
+            if !identities.insert((reference.card.id.clone(), reference.card.face_index)) {
+                return Err(Error::InvalidCatalog(format!(
+                    "duplicate printing {} face {}",
+                    reference.card.id, reference.card.face_index
+                )));
+            }
+            callback(reference)?;
+            count += 1;
+        }
+        Ok(())
+    })?;
+    if count == 0 {
+        return Err(Error::InvalidCatalog("catalogue contains no cards".into()));
+    }
+    Ok(count)
 }
 
 /// Build an offline visual index from a local Magic catalogue and image folder.
@@ -476,6 +527,52 @@ mod tests {
         let references =
             read_references(&fixture.catalog(&first.to_string())).expect("single card");
         assert_eq!(references.len(), 1);
+    }
+
+    /// Streaming enrollment preserves face metadata and reports late duplicate keys.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn streamed_references_match_legacy_and_reject_late_duplicates() {
+        let fixture = Fixture::new();
+        let face = json!({
+            "id":"two-sided", "name":"Front // Back", "layout":"transform",
+            "card_faces":[
+                {"name":"Front", "image_uris":{"normal":"https://example.test/front.jpg"}},
+                {"name":"Back", "image_uris":{"normal":"https://example.test/back.jpg"}}
+            ]
+        });
+        for content in [
+            json!([face]).to_string(),
+            json!({"cards":[face]}).to_string(),
+            format!("{face}\n"),
+        ] {
+            let path = fixture.catalog(&content);
+            let expected = read_references(&path).unwrap();
+            let mut observed = Vec::new();
+            let count = for_each_reference(&path, |reference| {
+                observed.push(reference);
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(count, 2);
+            assert_eq!(observed, expected);
+        }
+        let path = fixture.catalog(&format!("{face}\n{face}\n"));
+        let mut count = 0;
+        assert!(
+            for_each_reference(&path, |_| {
+                count += 1;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(count, 2);
+        let error = for_each_reference(&fixture.catalog(&face.to_string()), |_| {
+            Err(Error::InvalidOptions("consumer failure".into()))
+        });
+        assert!(
+            matches!(error, Err(Error::InvalidOptions(message)) if message == "consumer failure")
+        );
     }
 
     /// Current gzip JSONL is recognized by bytes even with a non-gzip filename.

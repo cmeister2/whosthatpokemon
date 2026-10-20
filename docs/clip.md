@@ -57,8 +57,7 @@ dimension; scans require the same model and transform. CLIP's exploratory CLI
 defaults are `--min-similarity 0.90 --min-margin 0.04`; they can be overridden and
 do not establish calibrated accuracy. CLIP embeddings can also confuse similar
 printings. The optional `ort` dependency is pinned to the tested release-candidate
-API-24 stack; newer releases requiring Rust 1.92 would change this project's
-compatibility contract.
+API-24 stack; dependency changes require compatible model/runtime verification.
 
 Score scales and defaults differ between backends. Probability estimates require
 independent calibration and evaluation on representative captures.

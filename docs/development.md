@@ -4,7 +4,7 @@ Run these commands from the repository root.
 
 ## Checks
 
-The crate uses Rust edition 2024 and requires Rust 1.90.0 or newer. Run the CI
+The crate uses Rust edition 2024 and requires Rust 1.94.0 or newer. Run the CI
 checks on stable and the declared MSRV:
 
 ```sh
@@ -14,15 +14,15 @@ cargo test --locked --doc --all-features
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 
-cargo +1.90.0 check --locked --all-targets --all-features
-cargo +1.90.0 test --locked --all-targets --all-features
-cargo +1.90.0 test --locked --doc --all-features
-cargo +1.90.0 fmt --all -- --check
-cargo +1.90.0 clippy --locked --all-targets --all-features -- -D warnings
+cargo +1.94.0 check --locked --all-targets --all-features
+cargo +1.94.0 test --locked --all-targets --all-features
+cargo +1.94.0 test --locked --doc --all-features
+cargo +1.94.0 fmt --all -- --check
+cargo +1.94.0 clippy --locked --all-targets --all-features -- -D warnings
 ```
 
-These compile and test both backends without downloading a model or loading a
-native runtime. Public and private Rust items require documentation, including
+These compile and test the matching backends and OCR adapter without downloading
+models or loading an external inference runtime. Public and private Rust items require documentation, including
 actual failure/panic conditions where applicable. CI separately runs
 `cargo msrv verify -- cargo check --locked --all-targets --all-features` and
 `cargo llvm-cov --all-features --workspace --locked`. Install those tools using
