@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Watch a Magic card go from picture to identification, with real processing times at every step.">
+    <meta name="description" content="Follow real native Rust and ocracle runs from a public Magic card picture to identification, with measured times for every stage.">
     <meta name="theme-color" content="#f6f7f8">
-    <title>Pipeline explorer · whosthatpokemon</title>
+    <title>Native pipeline gallery · whosthatpokemon</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='10' y='6' width='28' height='36' rx='5' fill='%23292f2b'/%3E%3Cpath d='M16 16h16M16 24h10M16 32h16' stroke='%23d9edb0' stroke-width='3'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
@@ -19,22 +19,28 @@
     <main class="wrap">
       <section class="intro" aria-labelledby="page-heading">
         <div class="intro-copy">
-          <p class="eyebrow">Pipeline explorer</p>
+          <p class="eyebrow">Native pipeline gallery</p>
           <h1 id="page-heading">From picture to card.</h1>
-          <p>Follow what happens when the library identifies a card: find it in a picture, read its name, narrow the search, and confirm the image. This public example runs automatically.</p>
+          <p>Follow real runs of the Rust library: find a card in a picture, read its name with ocracle, narrow the search, and confirm the image. The first example is ready to explore.</p>
         </div>
         <div class="total-summary" aria-label="Measured processing time">
-          <span class="summary-label">End to end</span>
+          <span class="summary-label">Native scene total</span>
           <strong id="timing-total">—</strong>
-          <span class="summary-caption">measured in this browser</span>
+          <span class="summary-caption">measured in a release build</span>
         </div>
       </section>
 
+      <section class="examples-section" aria-labelledby="examples-heading">
+        <div class="examples-heading"><h2 id="examples-heading">Public examples</h2><span>Actual native outputs · no browser OCR</span></div>
+        <nav id="example-nav" class="example-nav" aria-label="Choose a public example"><p class="empty-state">Loading the native gallery…</p></nav>
+      </section>
+
       <section id="pipeline" class="pipeline-section" aria-labelledby="pipeline-heading">
-        <h2 id="pipeline-heading" class="visually-hidden">The identification process</h2>
+        <h2 id="pipeline-heading" class="visually-hidden">The native identification process</h2>
+        <p id="sample-description" class="sample-description">Loading a public example…</p>
         <div class="run-status">
-          <div class="status-copy"><span class="status-indicator" aria-hidden="true"></span><p id="status-message" role="status" aria-live="polite">Loading the example…</p></div>
-          <button id="rerun-button" class="button button-outline" disabled><span aria-hidden="true">↻</span> Run again</button>
+          <div class="status-copy"><span class="status-indicator" aria-hidden="true"></span><p id="status-message" role="status" aria-live="polite">Loading recorded native results…</p></div>
+          <a id="sample-source" class="sample-source" href="https://github.com/cmeister2/whosthatpokemon">Example source <span aria-hidden="true">↗</span></a>
         </div>
 
         <div class="pipeline-grid">
@@ -61,10 +67,10 @@
             <p class="stage-description">Find the corners, crop the card, and straighten its perspective.</p>
             <div class="stage-body">
               <div class="crop-frame">
-                <canvas id="crop-canvas" width="500" height="700" aria-label="Perspective-corrected card, with its title region highlighted"></canvas>
+                <img id="crop-image" alt="Actual perspective-corrected card produced by magicextract" hidden>
                 <div id="crop-placeholder" class="image-placeholder">Waiting for the card crop…</div>
               </div>
-              <p id="crop-information" class="stage-caption">The highlighted band supplies the title.</p>
+              <p id="crop-information" class="stage-caption">Actual perspective-corrected pixels from magicextract.</p>
             </div>
             <div class="stage-footer"><span class="stage-state">Straightened card</span><span class="stage-arrow" aria-hidden="true">→</span></div>
           </article>
@@ -75,11 +81,12 @@
             <p class="stage-description">Read the name from the small title band using OCR.</p>
             <div class="stage-body">
               <div class="title-band">
-                <canvas id="title-canvas" width="500" height="70" aria-label="Title band supplied to OCR"></canvas>
+                <img id="title-image" alt="Exact title crop supplied to native ocracle" hidden>
                 <div id="title-placeholder" class="image-placeholder">Title image</div>
               </div>
               <div class="reading-arrow" aria-hidden="true">↓</div>
               <div class="ocr-output"><span class="small-label">Literal OCR output</span><p id="ocr-text" class="ocr-text">Waiting for text…</p><span id="ocr-confidence" class="ocr-confidence"></span></div>
+              <div id="attempt-tabs" class="attempt-tabs" aria-label="Inspect native orientation attempts"></div>
               <p id="orientation-note" class="stage-caption"></p>
             </div>
             <div class="stage-footer"><span class="stage-state">Text evidence</span><span class="stage-arrow" aria-hidden="true">→</span></div>
@@ -111,40 +118,24 @@
 
           <article id="stage-result" class="stage result-stage" data-state="waiting" aria-labelledby="result-heading">
             <div class="stage-meta"><span class="step-number">06</span><span id="timing-decision" class="stage-time">—</span></div>
-            <h3 id="result-heading">Identify the card</h3>
-            <p class="stage-description">Combine text and image evidence. Accept a supported match or abstain.</p>
-            <div class="stage-body"><div id="recognition-result" class="recognition-result"><div class="result-placeholder">Waiting for both text and visual evidence…</div></div><p class="stage-caption">A card’s identity can be known while its exact printing stays ambiguous.</p></div>
-            <div class="stage-footer"><span class="stage-state">Final decision</span><span class="stage-complete" aria-hidden="true">✓</span></div>
+            <h3 id="result-heading">Ranked matches</h3>
+            <p class="stage-description">Return scored matches and state which identity the evidence supports.</p>
+            <div class="stage-body"><div id="recognition-result" class="recognition-result"><div class="result-placeholder">Waiting for both text and visual evidence…</div></div></div>
+            <div class="stage-footer"><span class="stage-state">Ranked result &amp; decision</span><span class="stage-complete" aria-hidden="true">✓</span></div>
           </article>
         </div>
 
-        <div class="measurement-notes"><p id="timing-summary">Stage timings will appear as the example runs.</p><p>One-time setup <span id="timing-setup" class="inline-time">—</span><span class="note-separator" aria-hidden="true">·</span><span id="catalog-size">Loading reference catalogue…</span></p></div>
-        <details class="attempt-details"><summary>Orientation attempts</summary><ol id="attempt-list" class="attempt-list"><li class="empty-state">No attempts yet.</li></ol></details>
+        <div class="measurement-notes"><p id="timing-summary">Native stage timings will appear with the example.</p><p>One-time setup <span id="timing-setup" class="inline-time">—</span><span class="note-separator" aria-hidden="true">·</span><span id="catalog-size">Loading reference catalogue…</span></p></div>
+        <details class="run-details"><summary>Native run details and orientation attempts</summary><p id="engine-details" class="engine-details"></p><p id="model-details" class="model-details"></p><ol id="attempt-list" class="attempt-list"><li class="empty-state">No native attempts loaded.</li></ol></details>
       </section>
 
-      <details class="example-controls">
-        <summary><span>Try another example or your own picture</span><span class="details-hint">Optional</span></summary>
-        <div class="controls-body">
-          <div class="sample-control"><label for="sample-select">Public example</label><select id="sample-select" disabled><option>Loading examples…</option></select></div>
-          <p id="sample-description" class="sample-description">Loading a rendered public test scene…</p>
-          <div class="input-actions">
-            <label class="button button-dark" for="file-input">Upload picture</label><input id="file-input" type="file" accept="image/*" class="visually-hidden">
-            <button id="camera-button" class="button button-outline">Use camera</button>
-            <label class="check-label"><input id="cropped-input" type="checkbox"> Already cropped to one card</label>
-            <label class="layout-control" for="layout-select">Frame <select id="layout-select"><option value="modern">Modern</option><option value="classic">Classic</option></select></label>
-          </div>
-          <p class="privacy-note">Your pictures stay on this device. Processing runs locally in your browser.</p>
-        </div>
-      </details>
-
-      <aside class="scope-note"><span class="small-label">About this demonstration</span><p>This small example uses 28 public reference printings. The browser illustration reads text with Tesseract; the native library uses ocracle, so their timings differ. Times shown here are measured on your device. Cards outside the example catalogue may remain unidentified.</p></aside>
+      <aside class="scope-note"><span class="small-label">About these examples</span><p id="scope-description">These are recorded outputs from the native Rust library using magicextract and ocracle, generated from public inputs. The browser only displays the results. Timings belong to that native release run; they are not measurements of your device. The small reference catalogue illustrates the process, not full-catalogue accuracy.</p></aside>
     </main>
 
     <footer class="site-footer wrap">
-      <div class="footer-links"><a href="https://github.com/cmeister2/whosthatpokemon">Source</a><a href="https://github.com/cmeister2/magicextract">magicextract</a><a href="https://github.com/cmeister2/ocracle">ocracle</a><a href="https://scryfall.com/docs/api">Scryfall</a><a href="ocr/NOTICE.md">OCR licenses</a></div>
+      <div class="footer-links"><a href="https://github.com/cmeister2/whosthatpokemon">Source</a><a href="https://github.com/cmeister2/magicextract">magicextract</a><a href="https://github.com/cmeister2/ocracle">ocracle</a><a href="https://scryfall.com/docs/api">Scryfall</a></div>
       <p class="art-attribution">Magic: The Gathering content and card images © Wizards of the Coast. Reference images and metadata from Scryfall. Examples are public rendered scenes, not photographs of a physical collection. This project is not affiliated with Wizards of the Coast.</p>
     </footer>
 
-    <dialog id="camera-dialog" aria-labelledby="camera-heading"><div class="camera-dialog-heading"><h2 id="camera-heading">Capture a card</h2><button id="close-camera" class="text-button" aria-label="Close camera">Close</button></div><video id="camera-video" autoplay muted playsinline></video><p>Keep the whole card in frame, with even light and a little space around it.</p><button id="take-picture" class="button button-dark">Take picture</button></dialog>
   </body>
 </html>

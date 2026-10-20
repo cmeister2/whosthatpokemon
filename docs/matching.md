@@ -110,33 +110,43 @@ The [native OCR guide](ocr.md) explains how to obtain raw readings with ocracle.
 
 ## Explore the pipeline
 
-The [pipeline explorer](https://cmeister2.github.io/whosthatpokemon/) runs a
-public example automatically and follows one card through the identification
-process: source picture, detected boundary and perspective-corrected crop,
-literal title OCR, indexed name lookup, shortlisted image comparisons and a
-combined decision. The title search proposes card identities before visual
-verification; reprints do not add independent votes. The visual stage uses a
-bounded candidate set and never falls back to checking the entire catalogue.
+The [pipeline gallery](https://cmeister2.github.io/whosthatpokemon/) opens a
+complete public example without requiring an upload. It follows actual runs of
+the native Rust library: source picture, detected boundaries and magicextract
+rectifications, literal ocracle title readings, indexed candidate lookup,
+shortlisted visual comparisons and the returned ranked matches, alongside
+combined identity/printing decisions. Other
+examples include a four-card scene with Counterspell, an empty scene and the
+Christopher Rush Alpha Lightning Bolt scan. Detected cards and recorded
+orientation attempts can be inspected individually.
 
-The page uses the same Rust title lookup, candidate matching and combined
-evidence policy as the native library, compiled to WebAssembly. English title
-OCR uses self-hosted Tesseract.js in the browser; native OCR uses ocracle. The
-browser illustration and native application therefore have different timings.
-Text proposals alone do not accept a card, conflicting evidence remains visible,
-and the card identity can be known while its printing stays ambiguous. Similarity
-and OCR confidence scores are heuristics, not calibrated identity probabilities.
+These are production `mtg identify` results generated in a release build, not an
+interactive approximation using WebAssembly or another OCR backend. The page
+shows the real card/title PNG traces, exact OCR model provenance, retrieval
+candidates, geometric evidence and final native decisions. Failed readings,
+abstentions and conflicting orientations remain visible. A title proposes card
+identities before visual verification, and reprints do not add independent
+votes. The visual stage never falls back to checking the entire catalogue.
 
-Every stage displays a duration measured on the viewer's device. End-to-end time
-includes scene extraction and the selected card's processing; one-time OCR
-model/index setup is shown separately. The explorer executes the pipeline rather
-than replaying prerecorded reports or benchmark figures. Optional controls let
-you choose another public example, upload a picture or use a camera. Pictures
-stay in the tab. The bundled catalogue contains only 28 public printings, so
-cards outside it may remain unidentified.
+Stage durations were measured on the generation machine. Its CPU, source
+revision, model hash and catalogue scope appear in the run details. The scene
+total covers all detected cards; OCR, lookup, verification and decision timings
+cover the selected card, including both orientations when attempted. Model and
+index loading is separate, and gallery PNG export is excluded. The browser
+only displays the recorded native output: these are not viewer-device timings
+or full-catalogue accuracy measurements.
 
-The modern and classic title bands assume conventional portrait frames. Split,
-adventure, showcase and full-art cards can need different regions. Legacy visual
-scan and independent text-search APIs remain available for diagnostics and
-sample-report generation; they are not the page's default route.
+The site build generates the gallery JSON and native image traces outside the
+repository; they are deployment artifacts rather than committed evidence. See
+[the public asset guide](assets/README.md) for reproduction. The published page
+has no upload, OCR-model download or card-adjustment flow. Conventional portrait
+title regions can fail on unusual frames, and a verified card identity can still
+leave the printing ambiguous. Similarity and OCR scores remain heuristics, not
+calibrated identity probabilities. The final panel displays each returned
+printing’s visual similarity on its original 0–1 scale, with geometric agreement
+and the native identity/printing decision. The bars preserve those scores; they
+are not normalized into probabilities. Native full-catalogue confidence remains
+unestablished when only a shortlist was checked; if the native search was
+complete, the decision details show its uncalibrated printing confidence.
 
 [Documentation](README.md)

@@ -247,8 +247,10 @@ impl MagicOcr {
 /// Crop a padded conventional title line in an explicit card orientation.
 ///
 /// Cropping starts near the left border and above the nominal title frame to
-/// tolerate small rectification and sleeve margins. It stops before the mana
-/// cost and the type line on conventional frames.
+/// tolerate small rectification and sleeve margins. The upper black card edge
+/// is excluded: its strong horizontal line interferes with detector-free text
+/// recognition. The crop stops before the mana cost and the type line on
+/// conventional frames.
 ///
 /// # Errors
 ///
@@ -266,8 +268,8 @@ fn title_crop(
         ));
     }
     let normalized = match layout {
-        FrameLayout::Modern => [0.02, 0.0, 0.82, 0.12],
-        FrameLayout::Classic => [0.02, 0.0, 0.83, 0.14],
+        FrameLayout::Modern => [0.02, 0.03, 0.82, 0.12],
+        FrameLayout::Classic => [0.02, 0.03, 0.83, 0.14],
     };
     let bounds = pixel_bounds(image.width(), image.height(), normalized)?;
     let [x, y, width, height] = bounds;
@@ -432,8 +434,8 @@ mod tests {
         let image = DynamicImage::new_rgb8(500, 700);
         let (_, modern) = title_crop(&image, FrameLayout::Modern, 0).unwrap();
         let (_, classic) = title_crop(&image, FrameLayout::Classic, 0).unwrap();
-        assert_eq!(modern, [10, 0, 400, 84]);
-        assert_eq!(classic, [10, 0, 405, 98]);
+        assert_eq!(modern, [10, 21, 400, 63]);
+        assert_eq!(classic, [10, 21, 405, 77]);
 
         assert_eq!(
             pixel_bounds(101, 141, [0.02, 0.0, 0.83, 0.14]).unwrap(),
@@ -450,10 +452,10 @@ mod tests {
         let (upright, upright_bounds) = title_crop(&image, FrameLayout::Modern, 0).unwrap();
         let (inverted, inverted_bounds) = title_crop(&image, FrameLayout::Modern, 180).unwrap();
 
-        assert_eq!(upright_bounds, [2, 0, 80, 24]);
+        assert_eq!(upright_bounds, [2, 6, 80, 18]);
         assert_eq!(inverted_bounds, upright_bounds);
-        assert_eq!(upright.to_rgb8().get_pixel(0, 0).0, [2, 0, 0]);
-        assert_eq!(inverted.to_rgb8().get_pixel(0, 0).0, [97, 199, 0]);
+        assert_eq!(upright.to_rgb8().get_pixel(0, 0).0, [2, 6, 0]);
+        assert_eq!(inverted.to_rgb8().get_pixel(0, 0).0, [97, 193, 0]);
     }
 
     /// Fast title OCR has a deliberately narrower input contract than whole-card OCR.
