@@ -1,4 +1,4 @@
-name: Native pipeline gallery
+name: Pipeline gallery and camera
 
 on:
   push:
@@ -11,6 +11,12 @@ on:
       - "scripts/build-native-gallery.py"
       - "scripts/fetch-page-resources.py"
       - "scripts/check-native-gallery.py"
+      - "scripts/build-camera.sh"
+      - "scripts/build-camera-page.py"
+      - "scripts/build-full-camera-catalogue.py"
+      - "scripts/test_full_camera_catalogue.py"
+      - "scripts/check-camera.mjs"
+      - "examples/camera_parity.rs"
       - ".github/workflows/pages.yml"
   pull_request:
     paths:
@@ -21,6 +27,12 @@ on:
       - "scripts/build-native-gallery.py"
       - "scripts/fetch-page-resources.py"
       - "scripts/check-native-gallery.py"
+      - "scripts/build-camera.sh"
+      - "scripts/build-camera-page.py"
+      - "scripts/build-full-camera-catalogue.py"
+      - "scripts/test_full_camera_catalogue.py"
+      - "scripts/check-camera.mjs"
+      - "examples/camera_parity.rs"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -37,6 +49,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: wasm-bindgen-cli@0.2.129
       - name: Prepare hash-verified public references and ocracle weights
         run: python3 scripts/fetch-page-resources.py --cache "$RUNNER_TEMP/wtp-page-resources"
       - name: Compile the production native identification CLI
@@ -49,6 +66,33 @@ jobs:
           --output "$RUNNER_TEMP/wtp-pages"
       - name: Check native decisions, orientations, timings and trace assets
         run: python3 scripts/check-native-gallery.py "$RUNNER_TEMP/wtp-pages"
+      - name: Compile the actual OCRacle browser pipeline
+        run: scripts/build-camera.sh "$RUNNER_TEMP/wtp-camera-engine"
+      - name: Check the complete-catalogue exporter contracts
+        run: WTP_TEST_BINARY="$PWD/target/release/whosthatpokemon" python3 scripts/test_full_camera_catalogue.py -v
+      - name: Prepare the complete English paper metadata snapshot
+        run: >-
+          python3 scripts/build-full-camera-catalogue.py
+          --binary target/release/whosthatpokemon
+          --cache "$RUNNER_TEMP/wtp-camera-catalogue-cache"
+          --output "$RUNNER_TEMP/wtp-camera-catalogue.json.gz"
+      - name: Package the webcam page and pinned public browser resources
+        run: >-
+          python3 scripts/build-camera-page.py
+          --metadata "$RUNNER_TEMP/wtp-camera-catalogue.json.gz"
+          --cache "$RUNNER_TEMP/wtp-page-resources"
+          --engine "$RUNNER_TEMP/wtp-camera-engine"
+          --output "$RUNNER_TEMP/wtp-pages"
+      - name: Generate public native RGBA reference results outside the deployment
+        run: >-
+          cargo run --locked --release --features web,ocr --example camera_parity --
+          "$RUNNER_TEMP/wtp-pages" "$RUNNER_TEMP/wtp-camera-parity"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Run the deployed OCRacle WASM and compare with native identification
+        run: node scripts/check-camera.mjs "$RUNNER_TEMP/wtp-pages" "$RUNNER_TEMP/wtp-camera-parity"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ${{ runner.temp }}/wtp-pages

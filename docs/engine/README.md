@@ -22,6 +22,12 @@ the site build; see [the public asset guide](../assets/README.md). This avoids
 presenting another OCR backend or browser timings as the native library's
 behaviour. The bindings remain available for browser integrations and tests.
 
+The separate [camera page](../ocr.md#browser-camera) builds with `web,ocr`
+into an external deployment directory using `scripts/build-camera.sh`. It exports
+`RemoteBrowserEngine`, runs OCRacle itself and requests only missing
+OCR-selected reference images against the full English metadata snapshot. Its
+WASM and weights are generated deployment assets rather than checked-in binaries.
+
 The JavaScript API exports an asynchronous default `init()` function and
 `BrowserEngine`. Construct the engine with validated reference-index JSON, then
 call `scan(imageBytes, alreadyCropped)` or

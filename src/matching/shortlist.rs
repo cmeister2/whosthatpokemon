@@ -454,6 +454,38 @@ pub(super) fn recognize_candidates_with(
     candidate_options: &CandidateOptions,
     candidates: &[CardMetadata],
 ) -> Result<CandidateRecognition, Error> {
+    recognize_selected_with(index, image, options, candidate_options, candidates, true)
+}
+
+/// Verify only explicit physical-face proposals while preserving candidate-scope accounting.
+///
+/// # Errors
+///
+/// Returns an error for invalid options/input or unavailable selected records.
+#[cfg(any(not(target_arch = "wasm32"), feature = "ocr"))]
+pub(super) fn recognize_faces_with(
+    index: &impl CandidateSource,
+    image: &DynamicImage,
+    options: &MatchOptions,
+    candidate_options: &CandidateOptions,
+    candidates: &[CardMetadata],
+) -> Result<CandidateRecognition, Error> {
+    recognize_selected_with(index, image, options, candidate_options, candidates, false)
+}
+
+/// Share bounded descriptor and geometry verification across explicit and expanded proposals.
+///
+/// # Errors
+///
+/// Returns an error for invalid options/input or unavailable selected records.
+fn recognize_selected_with(
+    index: &impl CandidateSource,
+    image: &DynamicImage,
+    options: &MatchOptions,
+    candidate_options: &CandidateOptions,
+    candidates: &[CardMetadata],
+    expand_related: bool,
+) -> Result<CandidateRecognition, Error> {
     let total_started = Instant::now();
     let mut timings = CandidateTimings::default();
     options.validate()?;
@@ -461,7 +493,12 @@ pub(super) fn recognize_candidates_with(
     validate_image(image)?;
 
     let stage_started = Instant::now();
-    let selection = select_candidates(index, candidates, candidate_options.max_descriptors)?;
+    let selection = select_candidates(
+        index,
+        candidates,
+        candidate_options.max_descriptors,
+        expand_related,
+    )?;
     timings.candidate_selection = stage_started.elapsed().as_secs_f64() * 1_000.0;
     if selection.descriptors.is_empty() {
         timings.total = total_started.elapsed().as_secs_f64() * 1_000.0;
@@ -508,12 +545,9 @@ pub(super) fn recognize_candidates_with(
         let offsets: Vec<_> = locations.iter().map(|location| location.offset).collect();
         let mut references = index.read_candidate_globals(shard, &offsets)?;
         for location in locations {
-            let reference = references
-                .get_mut(location.offset)
-                .and_then(Option::take)
-                .ok_or_else(|| {
-                    Error::InvalidIndex("selected global candidate missing from shard".into())
-                })?;
+            let reference = references.remove(&location.offset).ok_or_else(|| {
+                Error::InvalidIndex("selected global candidate missing from shard".into())
+            })?;
             let candidate = score_candidate_reference(&reference, &queries);
             scored.push(ScoredCandidate {
                 location,
@@ -552,10 +586,8 @@ pub(super) fn recognize_candidates_with(
         let mut features = index.read_candidate_local_features(shard, &offsets)?;
         for position in positions {
             let location = scored[position].location;
-            scored[position].reference.features = features
-                .get_mut(location.offset)
-                .and_then(Option::take)
-                .ok_or_else(|| {
+            scored[position].reference.features =
+                features.remove(&location.offset).ok_or_else(|| {
                     Error::InvalidIndex("selected local candidate missing from shard".into())
                 })?;
         }
@@ -651,15 +683,23 @@ pub(super) fn recognize_candidates_with(
     Ok(result)
 }
 
-/// Expand exact face, semantic identity and illustration postings without a gallery scan.
+/// Resolve physical faces and optional related postings without a gallery scan.
 fn select_candidates(
     index: &impl CandidateSource,
     proposals: &[CardMetadata],
     max_candidates: usize,
+    expand_related: bool,
 ) -> Result<CandidateSelection, Error> {
     let matches = proposals
         .iter()
-        .map(|proposal| index.candidate_matches(proposal))
+        .map(|proposal| {
+            let mut found = index.candidate_matches(proposal)?;
+            if !expand_related {
+                found.identity.clear();
+                found.illustration.clear();
+            }
+            Ok(found)
+        })
         .collect::<Result<Vec<_>, Error>>()?;
     let matched_proposals = matches
         .iter()

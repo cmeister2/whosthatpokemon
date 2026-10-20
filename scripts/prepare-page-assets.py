@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+import tempfile
 from urllib.request import Request, urlopen
 
 from PIL import Image
@@ -26,6 +27,39 @@ ORIGINAL_IDS = [
     "bd8fa327-dd41-4737-8f19-2cf5eb1f7cdd",
     "8ee443cc-e17a-493b-9c93-1f9e141a30e4",
 ]
+
+
+SECRET_LAIR_EXAMPLES = (
+    {
+        "id": "27740ea5-79c8-420f-bc49-6d5eac58dac5",
+        "name": "Lightning Bolt", "collector_number": "675", "revision": "1783924002",
+        "sample_id": "secret-lair-hadoken", "title": "Secret Lair: Hadoken",
+        "description": "A public Secret Lair Lightning Bolt scan with the alternate title Hadoken. Follow the literal title reading and printed SLD 675 collector bar into the native candidate search.",
+        "png_sha256": "aa0061b2e3c47d2f4a2bd35b33e558868c6c9b7d80a43ab1d8417e67e86aebfc",
+        "jpg_sha256": "8e58a7fc9e4f2a6d999713fbe9ed265dac9245d6889ceaff9422bf1dc035fb52",
+    },
+    {
+        "id": "68357502-cf23-4bf6-ab4e-371428e540d0",
+        "name": "Swords to Plowshares", "collector_number": "364", "revision": "1783924634",
+        "sample_id": "secret-lair-mschf", "title": "Secret Lair: MSCHF gold lettering",
+        "description": "A public MSCHF Swords to Plowshares scan with stylized gold lettering. Inspect the uncorrected OCR and the printed SLD 364 collector bar rather than assuming a conventional title.",
+        "png_sha256": "87b6c3a5b9a67ae6409d98a95df9927fca44d6dee8839952441af8eed7997294",
+        "jpg_sha256": "aaa08fd44b3f648aef34e41fa5ada11e53870f02f0c14a5470bca9d1b97d8221",
+    },
+    {
+        "id": "c71446bd-08f2-41fe-ae44-db44814c8afb",
+        "name": "Plains", "collector_number": "415", "revision": "1783924015",
+        "sample_id": "secret-lair-textless", "title": "Secret Lair: a title at the bottom",
+        "description": "A public textless Secret Lair Plains scan with its name near the bottom and no conventional top title. The native run retains that failed title reading alongside the actual SLD 415 collector-bar evidence.",
+        "png_sha256": "f98774279a9cca1665bf10917ea87d95317decbd65a0831793d7fd76cf606e40",
+        "jpg_sha256": "e0dd8e38c45695e2effbe82ac51a2704c0e61fc9b3d6193f30f7e0f6e72da958",
+    },
+)
+CATALOG_SCOPE = (
+    "31 curated public printings: four scene identities, early same-art reprints, "
+    "twelve unrelated cards, and three Secret Lair examples. "
+    "This is not a complete Magic catalog."
+)
 
 
 def read_json(path):
@@ -79,6 +113,67 @@ def metadata_by_id(data, selected, fetch_missing):
     return chosen
 
 
+def public_image_url(example, extension):
+    """Return the pinned public PNG or normal JPEG source for one allowlisted card."""
+    identifier = example["id"]
+    variant = "png" if extension == "png" else "normal"
+    return (f"https://cards.scryfall.io/{variant}/front/{identifier[0]}/{identifier[1]}/"
+            f"{identifier}.{extension}?{example['revision']}")
+
+
+def extra_public_image(data, example, extension, fetch_missing, supplied=None):
+    """Require or explicitly fetch a checksum-pinned image from the fixed allowlist."""
+    expected = example[f"{extension}_sha256"]
+    relative = Path("page-public-extras") / f"{example['id']}.{extension}"
+    candidates = [data / relative, data / f"{example['id']}.{extension}"]
+    if supplied is not None:
+        candidates.insert(0, (data / supplied).resolve())
+    for source in candidates:
+        if not source.resolve().is_relative_to(data):
+            raise ValueError("Secret Lair reference escapes the explicit public data directory")
+        if source.is_file():
+            if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+                raise ValueError("Pinned public Secret Lair image checksum changed: " + str(source))
+            return source
+    if not fetch_missing:
+        raise ValueError(f"Missing public {extension.upper()} for {example['id']}; supply it under {relative} or rerun with --fetch-missing")
+    destination = data / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    time.sleep(0.55)
+    request = Request(public_image_url(example, extension), headers={
+        "User-Agent": "whosthatpokemon-public-page/0.0.0 (+https://github.com/cmeister2/whosthatpokemon)",
+        "Accept": "image/*",
+    })
+    with urlopen(request, timeout=45) as response:
+        content = response.read(16 * 1024 * 1024 + 1)
+    if len(content) > 16 * 1024 * 1024 or hashlib.sha256(content).hexdigest() != expected:
+        raise ValueError("Downloaded public Secret Lair image does not match its pin")
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
+        temporary = Path(output.name)
+        try:
+            output.write(content)
+            output.flush()
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return destination
+
+
+def secret_lair_sample(example, prefix):
+    """Describe one native-only public input without a legacy visual report path."""
+    return {
+        "id": example["sample_id"], "title": example["title"],
+        "description": example["description"],
+        "image": f"{prefix}/inputs/{example['sample_id']}.jpg",
+        "cropped": True, "kind": "canonical_scan", "layout": "modern",
+        "provenance": {
+            "source": f"https://scryfall.com/card/sld/{example['collector_number']}/{example['name'].lower().replace(' ', '-')}?utm_source=api",
+            "image_source": public_image_url(example, "jpg"),
+            "sha256": example["jpg_sha256"], "expected_card_count": 1,
+        },
+    }
+
+
 def main():
     """Build page inputs, thumbnails, enrollment metadata and native reports."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -97,13 +192,26 @@ def main():
     public_cards = manifest["cards"]
     by_id = {card["id"]: card for card in public_cards}
     selected = [by_id[identifier] for identifier in ORIGINAL_IDS]
+    extra_ids = {example["id"] for example in SECRET_LAIR_EXAMPLES}
+    base_cards = [card for card in public_cards if card["id"] not in extra_ids]
     for name in ("Lightning Bolt", "Counterspell", "Sol Ring"):
-        reprints = [card for card in public_cards if card["name"] == name and card.get("partition") == "reprint-challenge"]
+        reprints = [card for card in base_cards if card["name"] == name and card.get("partition") == "reprint-challenge"]
         selected.extend(reprints[:4])
-    unrelated = [card for card in public_cards if card.get("partition") in ("train", "validation", "test") and "//" not in card["name"]]
+    unrelated = [card for card in base_cards if card.get("partition") in ("train", "validation", "test") and "//" not in card["name"]]
     selected.extend(unrelated[:12])
     if len(selected) != 28 or len({card["id"] for card in selected}) != 28:
-        raise ValueError("Expected exactly 28 distinct public reference images")
+        raise ValueError("Expected exactly 28 distinct base public reference images")
+    extra_inputs = {}
+    for example in SECRET_LAIR_EXAMPLES:
+        supplied = by_id.get(example["id"], {}).get("file")
+        source = extra_public_image(data, example, "png", args.fetch_missing, supplied)
+        extra_inputs[example["id"]] = extra_public_image(data, example, "jpg", args.fetch_missing)
+        selected.append({"id": example["id"], "name": example["name"], "set": "sld",
+                         "file": str(source.relative_to(data)), "sha256": example["png_sha256"],
+                         "image_url": public_image_url(example, "png"),
+                         "source": secret_lair_sample(example, prefix)["provenance"]["source"]})
+    if len({card["id"] for card in selected}) != len(selected):
+        raise ValueError("Public Secret Lair examples must add distinct reference printings")
     metadata = metadata_by_id(data, selected, args.fetch_missing)
     references, enrollment = [], []
     for public in selected:
@@ -168,12 +276,16 @@ def main():
                     "image": f"{prefix}/inputs/classic-bolt.png", "report": f"{prefix}/reports/classic-bolt.json",
                     "cropped": True, "kind": "canonical_scan", "layout": "classic",
                     "provenance": {"source": classic["source"], "sha256": classic["sha256"], "expected_card_count": 1}})
+    for example in SECRET_LAIR_EXAMPLES:
+        destination = output / "inputs" / f"{example['sample_id']}.jpg"
+        shutil.copyfile(extra_inputs[example["id"]], destination)
+        samples.append(secret_lair_sample(example, prefix))
     work = data / "page-assets-work"
     catalog = work / "catalog.json"
     write_json(catalog, {"cards": enrollment})
     page_manifest = output / "samples.json"
     write_json(page_manifest, {"catalog_count": len(references), "index": f"{prefix}/catalog.index.json",
-                              "catalog_scope": "28 curated public printings: four scene identities, early same-art reprints, and twelve unrelated cards. This is not a complete Magic catalog.",
+                              "catalog_scope": CATALOG_SCOPE,
                               "fixture_revision": FIXTURE_REVISION, "samples": samples, "references": references})
     if not args.skip_reports:
         subprocess.run(["cargo", "run", "--locked", "--release", "--features", "web", "--example", "page_assets", "--",

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Recognize Magic cards from your camera using ocracle and the shared Rust identification pipeline in your browser.">
+    <meta name="theme-color" content="#f6f7f8">
+    <title>Camera scanner · whosthatpokemon</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='10' y='6' width='28' height='36' rx='5' fill='%23326f52'/%3E%3Cpath d='M16 16h16M16 24h10M16 32h16' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="camera.css">
+    <script type="module" src="camera.js"></script>
+  </head>
+  <body>
+    <header class="site-header wrap"><a class="brand" href="index.html">whosthatpokemon</a><nav aria-label="Project"><a href="index.html">Native gallery</a><a href="https://github.com/cmeister2/whosthatpokemon">Source ↗</a></nav></header>
+    <main class="wrap">
+      <section class="intro"><p class="eyebrow">Live camera scanner</p><h1>Point your camera at a card.</h1><p>ocracle reads the title and collector bar. The shared Rust pipeline looks up candidates in the English paper catalogue, then downloads their reference pictures to verify the match.</p></section>
+      <div class="scanner-grid">
+        <section class="preview-panel" aria-labelledby="preview-heading">
+          <div class="panel-heading"><h2 id="preview-heading">Camera &amp; input</h2><span id="frame-size" class="quiet"></span></div>
+          <div class="preview-frame">
+            <video id="camera-preview" autoplay muted playsinline hidden aria-label="Live camera preview"></video>
+            <img id="sample-preview" alt="Selected public example" hidden>
+            <svg id="detection-overlay" aria-label="Card outlines from the latest processed frame"></svg>
+            <div id="preview-empty" class="preview-empty"><span class="card-outline" aria-hidden="true"></span><p>Start the camera or try a public example.</p></div>
+            <span id="preview-badge" class="preview-badge" hidden></span>
+          </div>
+          <div class="camera-controls"><button id="start-camera" class="button primary" type="button">Start camera</button><button id="stop-camera" class="button" type="button" disabled>Stop</button><p>Keep the whole card in view, with even light.</p></div>
+          <p id="camera-status" class="camera-status" role="status" aria-live="polite">The camera is stopped. Access is requested only when you start it.</p>
+          <p id="pending-frame" class="quiet"></p>
+          <p id="sample-note" class="sample-note quiet" hidden></p>
+          <p class="privacy-note">Frames stay in this tab. The model and reference index are reused while scanning; a new frame is taken only when the previous one finishes.</p>
+          <details class="examples" open><summary>Try a public example</summary><div id="example-buttons" class="example-buttons"><p class="quiet">Loading examples…</p></div><p class="quiet">These images run through the same browser engine, without requesting camera access.</p></details>
+        </section>
+
+        <section class="results-panel" aria-labelledby="results-heading">
+          <div class="panel-heading"><h2 id="results-heading">Latest result</h2><span id="scan-rate" class="quiet"></span></div>
+          <div class="result-summary"><div><span>Rust pipeline</span><strong id="rust-time">—</strong></div><div><span>Frame response</span><strong id="response-time">—</strong></div></div>
+          <p id="processed-frame" class="processed-frame quiet">No capture has completed yet.</p>
+          <p id="result-status" class="result-status">No frame has been processed yet.</p>
+          <div id="card-results" class="card-results"><p class="empty-result">Detected cards, literal OCR and ranked matches will appear here.</p></div>
+        </section>
+      </div>
+
+      <section class="timings-panel" aria-labelledby="timings-heading"><div class="panel-heading"><h2 id="timings-heading">Latest frame, step by step</h2><span class="quiet">Measured in this browser</span></div><dl id="frame-timings" class="frame-timings"><div><dt>Capture</dt><dd id="time-capture">—</dd></div><div><dt>Extract cards</dt><dd id="time-extraction">—</dd></div><div><dt>Title + footer OCR</dt><dd id="time-ocr">—</dd></div><div><dt>Matching total</dt><dd id="time-matching">—</dd></div><div><dt>Lookup (completed calls)</dt><dd id="time-lookup">—</dd></div><div><dt>Verify (completed calls)</dt><dd id="time-visual">—</dd></div><div><dt>Fuse (completed calls)</dt><dd id="time-fusion">—</dd></div></dl><p id="reference-transfer" class="quiet">Candidate reference downloads will be measured separately from Rust processing.</p><p id="timing-note" class="quiet">Model loading is measured separately from frame processing.</p></section>
+      <aside class="run-info"><p id="catalog-scope">Loading the browser reference catalogue description…</p><p><span id="model-status">Model not loaded.</span> <span id="setup-time"></span></p><details><summary>Model and processing details</summary><p id="model-details">The pinned ocracle model loads after you choose the camera or a public example.</p><p>Camera frames are limited to a 1,280-pixel long edge and four detected cards per scan. The preview stays live while a worker processes one frame at a time. Visual similarities use their native 0–1 scale.</p><p>Recognition weights: <a href="camera-model-notice.txt">PaddlePaddle PP-OCRv6 small attribution</a> · <a href="camera-model-license.txt">Apache 2.0 license</a>.</p></details></aside>
+    </main>
+    <footer class="wrap site-footer"><a href="index.html">Explore recorded native runs →</a><p>Public example images and Magic: The Gathering content © Wizards of the Coast. Reference metadata and imagery from Scryfall. This project is not affiliated with Wizards of the Coast.</p></footer>
+  </body>
+</html>

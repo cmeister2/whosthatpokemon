@@ -29,6 +29,7 @@ flate2 = "1.1.10"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 imageproc = { version = "0.27.0", default-features = false }
 magicextract = "0.3.0"
+ocracle = { optional = true, version = "1.2.0" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = { version = "0.11.1", optional = true }
@@ -37,13 +38,12 @@ wasm-bindgen = { version = "0.2.129", optional = true }
 
 [features]
 clip = ["dep:ort", "dep:sha2"]
-web = ["dep:wasm-bindgen", "dep:base64"]
+web = ["dep:wasm-bindgen", "dep:base64", "dep:sha2"]
 ocr = ["dep:ocracle"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-ocracle = { version = "1.1.0", optional = true }
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24"], optional = true }
 ureq = { version = "3.4.2", features = ["json"] }

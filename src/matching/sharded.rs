@@ -302,6 +302,27 @@ impl ShardedIndex {
         )
     }
 
+    /// Verify only explicitly supplied physical faces, without expanding related printings.
+    ///
+    /// This supports exact collector-key proposals whose ambiguity has already
+    /// been retained by the text index. Returned scores and margins cover only
+    /// the supplied faces; omitted gallery faces remain unsearched. Work budgets
+    /// and geometry requirements are unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid options/input, legacy JSON storage, or an
+    /// unavailable/corrupt selected descriptor or local-feature record.
+    pub fn recognize_faces_with(
+        &self,
+        image: &DynamicImage,
+        options: &MatchOptions,
+        candidate_options: &super::CandidateOptions,
+        candidates: &[CardMetadata],
+    ) -> Result<super::CandidateRecognition, Error> {
+        super::shortlist::recognize_faces_with(self, image, options, candidate_options, candidates)
+    }
+
     /// Resolve one proposal through the startup-built metadata postings.
     ///
     /// # Errors

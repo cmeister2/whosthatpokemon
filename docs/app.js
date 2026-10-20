@@ -139,7 +139,17 @@ function renderLookup(result) {
     row.append(node('span', 'shortlist-meta', proposal.exact ? 'Exact title' : `Title similarity ${score(proposal.title_similarity)}`));
     return row;
   }));
-  if (!proposals.length) $('shortlist-list').append(node('li', 'empty-state', 'No title candidates. The library does not fall back to searching every reference.'));
+  if (!proposals.length) $('shortlist-list').append(node('li', 'empty-state', 'No title candidates. The collector bar can still propose a printing.'));
+  const footer = result.text.footer || [];
+  $('footer-shortlist-count').textContent = String(footer.length);
+  $('footer-shortlist-list').replaceChildren(...footer.map((hit) => {
+    const row = node('li', 'shortlist-item');
+    row.append(node('strong', 'shortlist-name', hit.card.face_name || hit.card.name));
+    row.append(node('span', 'shortlist-meta', `${printing(hit.card)} · ${hit.card.language || 'language unknown'}`));
+    row.append(node('span', 'shortlist-meta', hit.language_match === false ? 'Observed language disagrees' : (hit.reasons || []).join('; ')));
+    return row;
+  }));
+  if (!footer.length) $('footer-shortlist-list').append(node('li', 'empty-state', 'No collector key matched. Title candidates remain available.'));
 }
 
 function renderVisual(result) {
@@ -162,13 +172,17 @@ function renderVisual(result) {
     return row;
   }));
   if (!$('candidate-list').children.length) $('candidate-list').append(node('li', 'empty-state', 'No visual candidates were scored.'));
-  const metrics = [['Reference faces in catalogue', visual.total_references], ['Title-derived faces', visual.candidate_count], ['Descriptors scored', visual.descriptors_scored], ['Geometry checks', visual.geometry_attempted], ['Geometry agreements', visual.geometry_verified_count]];
+  const metrics = [['Reference faces in catalogue', visual.total_references], ['Text-derived faces', visual.candidate_count], ['Descriptors scored', visual.descriptors_scored], ['Geometry checks', visual.geometry_attempted], ['Geometry agreements', visual.geometry_verified_count]];
   $('visual-measurements').replaceChildren(...metrics.map(([label, value]) => {
     const row = node('div', 'measurement-label');
     row.append(node('span', '', label), node('span', 'measurement-score', String(value ?? 0)));
     return row;
   }));
-  $('visual-method-note').textContent = visual.omitted_descriptor_groups || visual.omitted_geometry_groups ? 'The budget omitted candidate groups; the library keeps the decision unresolved.' : 'Only title-derived candidates were compared. Scores are heuristics, not probabilities; shared artwork may leave the printing ambiguous.';
+  $('visual-method-note').textContent = visual.omitted_descriptor_groups || visual.omitted_geometry_groups ? 'The budget omitted candidate groups; the library keeps the decision unresolved.' : result.visual_strategy === 'exact_footer_faces' ? 'The collector key narrowed verification to these physical faces. Other catalogue faces were not searched.' : 'Only indexed text candidates and their related printings were compared. Shared artwork may leave the printing ambiguous.';
+  if (result.footer_verification) {
+    const first = result.footer_verification;
+    $('visual-method-note').textContent += ` An initial footer pass scored ${first.descriptors_scored} faces and attempted ${first.geometry_attempted} geometry checks before expanding the candidates. Verification time includes both passes.`;
+  }
 }
 
 function renderResult(detected) {
@@ -240,7 +254,7 @@ function renderResult(detected) {
   const confidence = node('p', 'result-caveat', confidenceText);
   confidence.id = 'result-confidence-note';
   details.append(confidence);
-  details.append(node('p', 'result-caveat', conflict ? 'The native run flagged strong, conflicting title identities across its orientation attempts. Its selected attempt is provisional.' : result.identity.reason));
+  details.append(node('p', 'result-caveat', conflict ? 'The native run flagged strong, conflicting text identities across its orientation attempts. Its selected attempt is provisional.' : result.identity.reason));
   if (!conflict && result.printing.reason) details.append(node('p', 'result-caveat', result.printing.reason));
   for (const entry of result.conflicts || []) details.append(node('p', 'result-caveat', `${entry.resolved ? 'Resolved' : 'Unresolved'} ${entry.kind} disagreement: ${entry.reason}`));
   container.append(details);
@@ -258,7 +272,9 @@ function renderAttempts(detected) {
     $('attempt-tabs').append(button);
     const row = node('li');
     row.append(node('strong', '', `${rotation}°${index === detected.selected_attempt ? ' · selected by library' : ''}`));
-    row.append(node('p', '', `Literal OCR: ${JSON.stringify(reading.ocr.reading.text)} · ${ms(reading.ocr_ms)} OCR + ${ms(reading.matching_ms)} matching`));
+    row.append(node('p', '', `Literal title: ${JSON.stringify(reading.ocr.reading.text)}`));
+    if (reading.footer_ocr) row.append(node('p', '', `Literal collector bar: ${JSON.stringify(reading.footer_ocr.observations.footer)}`));
+    row.append(node('p', '', `${ms(reading.title_ocr_ms ?? reading.ocr_ms)} title + ${ms(reading.footer_ocr_ms ?? 0)} footer + ${ms(reading.matching_ms)} matching`));
     row.append(node('p', '', `Identity: ${reading.identification.identity.status.replaceAll('_', ' ')}. ${reading.identification.identity.reason}`));
     $('attempt-list').append(row);
   });
@@ -286,6 +302,13 @@ function renderEmpty() {
   $('crop-information').textContent = 'No crop was produced.';
   $('ocr-text').textContent = 'No title crop to read.';
   $('ocr-confidence').textContent = '';
+  showImage('footer-image', undefined, 'footer-placeholder', '');
+  $('footer-text').textContent = 'No collector bar to read.';
+  $('footer-input-image').hidden = true;
+  $('footer-input-image').removeAttribute('src');
+  $('ocr-timing-breakdown').textContent = '';
+  $('footer-shortlist-count').textContent = '0';
+  $('footer-shortlist-list').replaceChildren(node('li', 'empty-state', 'No collector lookup was run.'));
   $('shortlist-count').textContent = '0';
   $('shortlist-list').replaceChildren(node('li', 'empty-state', 'No title lookup was run.'));
   $('candidate-list').replaceChildren(node('li', 'empty-state', 'No visual search was run.'));
@@ -308,6 +331,12 @@ function renderCard() {
   $('crop-information').textContent = sample().cropped ? 'Input already cropped; outline detection was bypassed.' : 'Actual native magicextract output before OCR orientation.';
   $('ocr-text').textContent = reading.ocr.reading.text || '(No text read)';
   $('ocr-confidence').textContent = Number.isFinite(reading.ocr.reading.confidence) ? `OCR score ${score(reading.ocr.reading.confidence)} · uncalibrated` : '';
+  showImage('footer-image', reading.footer_image, 'footer-placeholder', 'Actual collector bar read by native ocracle');
+  $('footer-text').textContent = reading.footer_ocr?.observations.footer || '(No footer text read)';
+  $('footer-input-image').hidden = !reading.footer_input_image;
+  if (reading.footer_input_image) $('footer-input-image').src = reading.footer_input_image;
+  else $('footer-input-image').removeAttribute('src');
+  $('ocr-timing-breakdown').textContent = `${ms(reading.title_ocr_ms ?? reading.ocr_ms)} title + ${ms(reading.footer_ocr_ms ?? 0)} collector bar`;
   renderLookup(reading.identification);
   renderVisual(reading.identification);
   renderResult(detected);
@@ -321,7 +350,7 @@ function renderCard() {
   $('orientation-note').textContent = `${multiple ? `Showing ${reading.ocr.rotation_degrees}° of two native attempts. ` : 'One native orientation attempt. '}The library selected ${detected.attempts[detected.selected_attempt].ocr.rotation_degrees}°. Stage times ${multiple ? 'include both attempts' : 'are from this attempt'}.`;
   $('timing-summary').textContent = `Scene total covers decoding, extraction and ${sample().result.cards.length === 1 ? 'the card' : `all ${sample().result.cards.length} detected cards`}. Stages 3–6 show card ${state.cardIndex + 1}${multiple ? ', including both orientations' : ''}. One-time setup and gallery image export are excluded.`;
   const result = detected.attempts[detected.selected_attempt].identification;
-  setStatus(detected.orientation_conflict ? 'The native run retained conflicting OCR orientations. No accepted identity is shown.' : accepted(result) ? 'The native title and verified picture agree within the shortlist. Its exact printing may remain unresolved.' : 'The native run abstained from identifying this card. The unsuccessful evidence remains visible.');
+  setStatus(detected.orientation_conflict ? 'The native run retained conflicting OCR orientations. No accepted identity is shown.' : accepted(result) ? 'Observed text and verified image evidence agree within the shortlist. The ranked printings remain visible.' : 'The native run abstained from identifying this card. The unsuccessful evidence remains visible.');
 }
 
 function render() {

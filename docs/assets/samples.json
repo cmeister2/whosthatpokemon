@@ -1,7 +1,7 @@
 {
-  "catalog_count": 28,
+  "catalog_count": 31,
   "index": "assets/catalog.index.json",
-  "catalog_scope": "28 curated public printings: four scene identities, early same-art reprints, and twelve unrelated cards. This is not a complete Magic catalog.",
+  "catalog_scope": "31 curated public printings: four scene identities, early same-art reprints, twelve unrelated cards, and three Secret Lair examples. This is not a complete Magic catalog.",
   "fixture_revision": "2c81797da2dc5760fbc5944818d59b436c0b5fe8",
   "samples": [
     {
@@ -61,6 +61,51 @@
       "provenance": {
         "source": "https://scryfall.com/card/lea/161/lightning-bolt?utm_source=api",
         "sha256": "b47c28eeefc228ffa9ca74eade76db071e09cf6e68829ceab88131db482c15f2",
+        "expected_card_count": 1
+      }
+    },
+    {
+      "id": "secret-lair-hadoken",
+      "title": "Secret Lair: Hadoken",
+      "description": "A public Secret Lair Lightning Bolt scan with the alternate title Hadoken. Follow the literal title reading and printed SLD 675 collector bar into the native candidate search.",
+      "image": "assets/inputs/secret-lair-hadoken.jpg",
+      "cropped": true,
+      "kind": "canonical_scan",
+      "layout": "modern",
+      "provenance": {
+        "source": "https://scryfall.com/card/sld/675/lightning-bolt?utm_source=api",
+        "image_source": "https://cards.scryfall.io/normal/front/2/7/27740ea5-79c8-420f-bc49-6d5eac58dac5.jpg?1783924002",
+        "sha256": "8e58a7fc9e4f2a6d999713fbe9ed265dac9245d6889ceaff9422bf1dc035fb52",
+        "expected_card_count": 1
+      }
+    },
+    {
+      "id": "secret-lair-mschf",
+      "title": "Secret Lair: MSCHF gold lettering",
+      "description": "A public MSCHF Swords to Plowshares scan with stylized gold lettering. Inspect the uncorrected OCR and the printed SLD 364 collector bar rather than assuming a conventional title.",
+      "image": "assets/inputs/secret-lair-mschf.jpg",
+      "cropped": true,
+      "kind": "canonical_scan",
+      "layout": "modern",
+      "provenance": {
+        "source": "https://scryfall.com/card/sld/364/swords-to-plowshares?utm_source=api",
+        "image_source": "https://cards.scryfall.io/normal/front/6/8/68357502-cf23-4bf6-ab4e-371428e540d0.jpg?1783924634",
+        "sha256": "aaa08fd44b3f648aef34e41fa5ada11e53870f02f0c14a5470bca9d1b97d8221",
+        "expected_card_count": 1
+      }
+    },
+    {
+      "id": "secret-lair-textless",
+      "title": "Secret Lair: a title at the bottom",
+      "description": "A public textless Secret Lair Plains scan with its name near the bottom and no conventional top title. The native run retains that failed title reading alongside the actual SLD 415 collector-bar evidence.",
+      "image": "assets/inputs/secret-lair-textless.jpg",
+      "cropped": true,
+      "kind": "canonical_scan",
+      "layout": "modern",
+      "provenance": {
+        "source": "https://scryfall.com/card/sld/415/plains?utm_source=api",
+        "image_source": "https://cards.scryfall.io/normal/front/c/7/c71446bd-08f2-41fe-ae44-db44814c8afb.jpg?1783924015",
+        "sha256": "e0dd8e38c45695e2effbe82ac51a2704c0e61fc9b3d6193f30f7e0f6e72da958",
         "expected_card_count": 1
       }
     }
@@ -681,6 +726,72 @@
       "artist": "Cristi Balanescu",
       "image_source": "https://cards.scryfall.io/png/front/0/c/0cb88075-14f8-4ac9-b947-5ca1d30938f1.png?1783929382",
       "image_sha256": "6cb50408ccbd36ea588b9616d0e3e63592ccc43d3018720b3397c40b6032171d"
+    },
+    {
+      "game": "mtg",
+      "id": "27740ea5-79c8-420f-bc49-6d5eac58dac5",
+      "name": "Lightning Bolt",
+      "oracle_id": "4457ed35-7c10-48c8-9776-456485fdf070",
+      "set": "sld",
+      "collector_number": "675",
+      "language": "en",
+      "face_index": 0,
+      "face_name": null,
+      "illustration_id": "85c6f286-0e79-46ae-a576-96f28a461c0b",
+      "source": "https://scryfall.com/card/sld/675/lightning-bolt?utm_source=api",
+      "oracle_text": "Lightning Bolt deals 3 damage to any target.",
+      "printed_text": "Hadoken deals 3 damage to any target.",
+      "printed_name": null,
+      "type_line": "Instant",
+      "layout": "normal",
+      "image": "assets/references/27740ea5-79c8-420f-bc49-6d5eac58dac5.webp",
+      "artist": "Jason Rainville",
+      "image_source": "https://cards.scryfall.io/png/front/2/7/27740ea5-79c8-420f-bc49-6d5eac58dac5.png?1783924002",
+      "image_sha256": "aa0061b2e3c47d2f4a2bd35b33e558868c6c9b7d80a43ab1d8417e67e86aebfc"
+    },
+    {
+      "game": "mtg",
+      "id": "68357502-cf23-4bf6-ab4e-371428e540d0",
+      "name": "Swords to Plowshares",
+      "oracle_id": "b1544f21-7e98-461b-aed5-e748b0168c52",
+      "set": "sld",
+      "collector_number": "364",
+      "language": "en",
+      "face_index": 0,
+      "face_name": null,
+      "illustration_id": "2f1ebfaa-acdb-484b-86f5-81088045406b",
+      "source": "https://scryfall.com/card/sld/364/swords-to-plowshares?utm_source=api",
+      "oracle_text": "Exile target creature. Its controller gains life equal to its power.",
+      "printed_text": null,
+      "printed_name": null,
+      "type_line": "Instant",
+      "layout": "normal",
+      "image": "assets/references/68357502-cf23-4bf6-ab4e-371428e540d0.webp",
+      "artist": "MSCHF",
+      "image_source": "https://cards.scryfall.io/png/front/6/8/68357502-cf23-4bf6-ab4e-371428e540d0.png?1783924634",
+      "image_sha256": "87b6c3a5b9a67ae6409d98a95df9927fca44d6dee8839952441af8eed7997294"
+    },
+    {
+      "game": "mtg",
+      "id": "c71446bd-08f2-41fe-ae44-db44814c8afb",
+      "name": "Plains",
+      "oracle_id": "bc71ebf6-2056-41f7-be35-b2e5c34afa99",
+      "set": "sld",
+      "collector_number": "415",
+      "language": "en",
+      "face_index": 0,
+      "face_name": null,
+      "illustration_id": "1ec6847b-bf28-4674-936b-abda05e800f7",
+      "source": "https://scryfall.com/card/sld/415/plains?utm_source=api",
+      "oracle_text": "({T}: Add {W}.)",
+      "printed_text": null,
+      "printed_name": null,
+      "type_line": "Basic Land — Plains",
+      "layout": "normal",
+      "image": "assets/references/c71446bd-08f2-41fe-ae44-db44814c8afb.webp",
+      "artist": "Ben Schnuck",
+      "image_source": "https://cards.scryfall.io/png/front/c/7/c71446bd-08f2-41fe-ae44-db44814c8afb.png?1783924015",
+      "image_sha256": "f98774279a9cca1665bf10917ea87d95317decbd65a0831793d7fd76cf606e40"
     }
   ]
 }

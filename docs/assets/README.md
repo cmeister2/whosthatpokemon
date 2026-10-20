@@ -1,9 +1,10 @@
 # Public demo assets
 
-The page searches 28 curated public reference printings: the four identities in
+The page searches 31 curated public reference printings: the four identities in
 the rendered scenes, four early printings each of Lightning Bolt, Counterspell
-and Sol Ring, and twelve unrelated cards. It does not contain a complete Magic
-catalog. `samples.json` discloses every reference, source, artist and image hash.
+and Sol Ring, twelve unrelated cards, and three Secret Lair printings. It does not
+contain a complete Magic catalog. `samples.json` discloses every reference,
+source, artist and image hash.
 Card imagery and Magic content belong to Wizards of the Coast and the credited
 artists; the project's MIT license does not relicense this material.
 
@@ -15,14 +16,22 @@ The fourth input is a public canonical Alpha Lightning Bolt scan that already
 contains a cropped card. Alpha has no printed collector number; the catalog's
 number is a database identifier, not text extracted from that card.
 
+Three further inputs are public Secret Lair scans: Hadoken (Lightning Bolt,
+SLD 675), MSCHF's Swords to Plowshares (SLD 364), and the textless Plains with its
+name near the bottom (SLD 415). Their small JPEG inputs are copied byte for byte;
+reference thumbnails are generated from separately pinned public PNGs. Each has
+source URLs and input/reference SHA-256 hashes. These three examples belong to
+the native gallery only and have no legacy `report` path.
+
 The gallery displays actual output from the native Rust `mtg identify` command
 with magicextract and ocracle. Its public inputs go through the release build's
-normal detection, rectification, title recognition, indexed lookup, candidate
-verification and evidence combination. The generated JSON retains literal OCR,
+normal detection, rectification, title and collector-bar recognition, indexed
+lookup, candidate verification and evidence combination. The generated JSON retains literal OCR,
 model hashes, orientation attempts, candidate lists, abstentions and conflicts.
-PNG traces contain the actual extracted card and exact title pixels used by
-ocracle. The browser only displays these native results; it runs no OCR or
-matching and asks for no input.
+PNG traces contain the actual extracted card, title and collector pixels, plus
+the two footer rows arranged side by side exactly as supplied to ocracle. The
+recorded gallery viewer only displays these native results; it runs no OCR or matching and asks
+for no input.
 
 Native stage times come from the generation machine, whose CPU, architecture,
 source revision and model provenance accompany the results. Scene totals cover
@@ -53,23 +62,28 @@ scan route, not the gallery's native OCR-first route, and are not the gallery's
 input. Catalog names and rules remain reference metadata rather than OCR
 observations.
 
-To regenerate, supply the public `magicextract` checkout and a directory with
-the public canonical image corpus's `manifest.json`, PNGs and cached
-`search-*.json` metadata. Install Pillow in a local virtual environment, then run
-from the project root:
+To regenerate the checked-in public inputs and thumbnails, supply the public
+`magicextract` checkout and a directory with the public canonical image corpus's
+`manifest.json`, PNGs and cached `search-*.json` metadata. Install Pillow in a local
+virtual environment, then run from the project root:
 
 ```sh
 python scripts/prepare-page-assets.py \
   --fixtures /path/to/magicextract \
-  --data /path/to/public-canonical-data
+  --data /path/to/public-canonical-data \
+  --skip-reports
 ```
 
-The script verifies image checksums, writes reference thumbnails and sample
-inputs, and invokes the native Rust example to rebuild the index and reports.
-With `--fetch-missing`, it explicitly fetches missing Scryfall metadata only for
-the selected public image IDs, in batches of at most 75 spaced at least 550 ms
-apart. It does not upload images. The raw metadata cache and temporary enrollment
-manifest stay in the supplied data directory, outside the published assets.
+The script verifies image checksums and writes public reference thumbnails and
+sample inputs. The three extra allowlisted cards require both pinned `.png` and
+`.jpg` files under `page-public-extras/ID.ext` in the supplied data directory
+(or `ID.ext` at its root); reference PNGs already named in its manifest can also
+be reused. With `--fetch-missing`, the script explicitly retrieves missing images
+for those three IDs and missing Scryfall metadata for the selected public image
+IDs, in batches of at most 75 spaced at least 550 ms apart. Downloaded images
+must match the committed SHA-256 pins. It does not upload images. The raw metadata
+cache and temporary enrollment manifest stay in the supplied data directory,
+outside the published assets.
 Private capture datasets are not valid inputs to this script.
 
 To regenerate only the index and reports after Rust changes, retain the
@@ -81,6 +95,11 @@ cargo run --locked --release --features web --example page_assets -- \
   docs/assets/catalog.index.json docs/assets/samples.json
 ```
 
-The negative sample must contain zero extracted cards. The positive sample
-counts are one, four and one, respectively. A matching score is a heuristic;
-neither the sample reports nor the live demo claim calibrated probabilities.
+Omitting `--skip-reports` also invokes the Rust example to rebuild the legacy
+index and reports. The example and browser diagnostic check skip native-only
+samples without a `report` path. Generated indexes, reports and native traces
+are not changes to commit.
+
+Expected detections are one for the perspective scene, four for the multi-card
+scene, zero for the empty scene, and one for each already-cropped scan. Matching
+scores are heuristics, not calibrated probabilities.

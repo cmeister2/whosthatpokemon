@@ -629,3 +629,373 @@ fn candidate_geometry_resolves_multiple_exact_title_identities() {
             .contains(&EvidenceSource::VisualGeometry)
     );
 }
+
+/// A scoped fixture separates actual verification evidence from a high global-looking score.
+fn footer_scoped_visual(card: &CardMetadata, verified: bool) -> ShortlistedRecognition {
+    let mut image = visual(&[(card, 0.96)], MatchStatus::Ambiguous);
+    partial_geometry(&mut image, card, 0.96);
+    image.scope = ShortlistScope::SuppliedCandidates;
+    image.budget_exhausted = false;
+    image.global_recognition = recognition(&[], MatchStatus::Unknown);
+    image.total_references = 50;
+    image.geometry_verified[0].global_similarity = 0.96;
+    if !verified {
+        image.geometry_verified.clear();
+        image.geometry_verified_count = 0;
+    }
+    image
+}
+
+/// Fuse complete exact footer postings with independently retained bounded title proposals.
+fn run_fields(
+    cards: &[CardMetadata],
+    observations: TextObservations,
+    image: ShortlistedRecognition,
+) -> CombinedRecognition {
+    let titles = super::super::evidence::TitleIndex::from_metadata(cards).unwrap();
+    let footers = super::super::evidence::FooterIndex::from_metadata(cards).unwrap();
+    let text = collect_field_candidates(&titles, &footers, &observations, 5);
+    combine(&observations, text, image, &MatchOptions::default())
+}
+
+#[test]
+fn exact_footer_and_verified_geometry_can_rescue_an_unreadable_title() {
+    let target = card("target", "correct", "Invented Portrait", "101");
+    let result = run_fields(
+        std::slice::from_ref(&target),
+        TextObservations {
+            title: "???".into(),
+            footer: "00101 R\nTST EN".into(),
+            ..TextObservations::default()
+        },
+        footer_scoped_visual(&target, true),
+    );
+    assert_eq!(result.identity.status, CombinedStatus::VerifiedShortlist);
+    assert_eq!(result.identity.card.unwrap().oracle_id, target.oracle_id);
+    assert!(result.identity.sources.contains(&EvidenceSource::Footer));
+    assert!(
+        result
+            .identity
+            .sources
+            .contains(&EvidenceSource::VisualGeometry)
+    );
+    assert!(!result.identity.sources.contains(&EvidenceSource::Title));
+    assert!(result.printing.card.is_none());
+    assert_eq!(result.printing.status, MatchStatus::Ambiguous);
+    assert_eq!(result.visual.recognition.confidence, 0.0);
+}
+
+#[test]
+fn exact_footer_cannot_replace_geometry_or_no_image_evidence() {
+    let target = card("target", "correct", "Invented Portrait", "101");
+    let observations = TextObservations {
+        footer: "101 TST EN".into(),
+        ..TextObservations::default()
+    };
+    let result = run_fields(
+        std::slice::from_ref(&target),
+        observations.clone(),
+        footer_scoped_visual(&target, false),
+    );
+    assert!(result.identity.card.is_none());
+    let mut empty = footer_scoped_visual(&target, false);
+    empty.recognition = recognition(&[], MatchStatus::Unknown);
+    let result = run_fields(&[target], observations, empty);
+    assert_eq!(result.identity.status, CombinedStatus::Unknown);
+    assert!(result.identity.card.is_none());
+}
+
+#[test]
+fn reused_art_and_wrong_semantic_footer_cannot_replace_whole_card_corroboration() {
+    let inherited_footer = card(
+        "original",
+        "different-identity",
+        "Unrelated Original",
+        "101",
+    );
+    let mut image = footer_scoped_visual(&inherited_footer, true);
+    image.geometry_verified[0].global_similarity = 0.63;
+    let result = run_fields(
+        &[inherited_footer],
+        TextObservations {
+            title: "Unreadable altered name".into(),
+            footer: "101 TST EN".into(),
+            ..TextObservations::default()
+        },
+        image,
+    );
+    assert!(result.identity.card.is_none());
+    assert!(result.printing.card.is_none());
+    assert_eq!(result.visual.geometry_verified_count, 1);
+}
+
+#[test]
+fn strong_contradictory_title_survives_footer_geometry_as_an_unresolved_conflict() {
+    let target = card("target", "correct", "Invented Portrait", "101");
+    let wrong_title = card("other", "incorrect", "Unrelated Spelling", "102");
+    let result = run_fields(
+        &[target.clone(), wrong_title.clone()],
+        TextObservations {
+            title: wrong_title.name,
+            footer: "101 TST EN".into(),
+            ..TextObservations::default()
+        },
+        footer_scoped_visual(&target, true),
+    );
+    assert_eq!(result.identity.status, CombinedStatus::Conflict);
+    assert!(result.identity.card.is_none());
+    assert!(result.conflicts.iter().any(
+        |conflict| conflict.sources.contains(&EvidenceSource::Title)
+            && conflict.sources.contains(&EvidenceSource::Footer)
+            && !conflict.resolved
+    ));
+    assert_eq!(result.text.footer.len(), 1);
+}
+
+#[test]
+fn footer_language_mismatch_cannot_corroborate_geometry() {
+    let target = card("target", "correct", "Invented Portrait", "101");
+    let result = run_fields(
+        std::slice::from_ref(&target),
+        TextObservations {
+            footer: "101 TST FR".into(),
+            ..TextObservations::default()
+        },
+        footer_scoped_visual(&target, true),
+    );
+    assert!(result.identity.card.is_none());
+    assert_eq!(result.text.footer[0].language_match, Some(false));
+    assert!(result.text.hints.is_empty());
+}
+
+#[test]
+fn complete_footer_ambiguity_cannot_be_hidden_by_printing_limits_or_game_collisions() {
+    let target = card("target", "correct", "Invented Portrait", "101");
+    let mut cards = vec![target.clone()];
+    for number in 0..6 {
+        let mut other = target.clone();
+        other.id = format!("reprint-{number}");
+        cards.push(other);
+    }
+    let mut unrelated = target.clone();
+    unrelated.game = "another-game".into();
+    cards.push(unrelated);
+    let result = run_fields(
+        &cards,
+        TextObservations {
+            footer: "101 TST EN".into(),
+            ..TextObservations::default()
+        },
+        footer_scoped_visual(&target, true),
+    );
+    assert_eq!(result.text.footer.len(), 8);
+    assert!(result.identity.card.is_none());
+}
+
+#[test]
+fn same_identity_language_alternatives_preserve_printing_ambiguity() {
+    let target = card("target", "correct", "Invented Portrait", "101");
+    let mut translated = target.clone();
+    translated.id = "translation".into();
+    translated.language = Some("fr".into());
+    let result = run_fields(
+        &[target.clone(), translated],
+        TextObservations {
+            footer: "101 TST".into(),
+            ..TextObservations::default()
+        },
+        footer_scoped_visual(&target, true),
+    );
+    assert_eq!(result.identity.status, CombinedStatus::VerifiedShortlist);
+    assert_eq!(result.text.footer.len(), 2);
+    assert!(
+        result
+            .text
+            .footer
+            .iter()
+            .all(|hit| hit.language_match.is_none())
+    );
+    assert!(result.printing.card.is_none());
+}
+
+#[test]
+fn footer_geometry_with_omitted_candidate_groups_does_not_accept() {
+    let target = card("target", "correct", "Invented Portrait", "101");
+    let mut image = footer_scoped_visual(&target, true);
+    image.omitted_hint_groups = 1;
+    let result = run_fields(
+        &[target],
+        TextObservations {
+            footer: "101 TST EN".into(),
+            ..TextObservations::default()
+        },
+        image,
+    );
+    assert!(result.identity.card.is_none());
+}
+
+/// Real procedural image verification keeps an exact footer face ahead of its large reprint family.
+#[test]
+fn indexed_footer_identify_scores_only_the_exact_physical_face_before_expansion() {
+    let directory = Directory::new();
+    let target = card("target", "shared-identity", "Unreadable Showcase", "101");
+    let image = portrait(7);
+    let mut builder = ShardedIndexBuilder::new(&directory.0, 1).unwrap();
+    builder.add(target.clone(), &image).unwrap();
+    for number in 0..3 {
+        let mut reprint = target.clone();
+        reprint.id = format!("reprint-{number}");
+        reprint.collector_number = Some(format!("20{number}"));
+        builder.add(reprint, &portrait(number + 10)).unwrap();
+    }
+    let visual = builder.finish().unwrap();
+    let titles = super::super::evidence::TitleIndex::from_visual_index(&visual).unwrap();
+    let footers = super::super::evidence::FooterIndex::from_visual_index(&visual).unwrap();
+    let FieldIdentification {
+        result,
+        visual_strategy,
+        footer_verification,
+    } = identify_fields_with(
+        &visual,
+        &titles,
+        &footers,
+        &image,
+        &TextObservations {
+            title: "???".into(),
+            footer: "101 TST EN".into(),
+            ..TextObservations::default()
+        },
+        &MatchOptions::default(),
+        5,
+        &CandidateOptions {
+            max_descriptors: 1,
+            max_geometry: 1,
+            orientations: CandidateOrientations::Upright,
+        },
+    )
+    .unwrap();
+    assert_eq!(visual_strategy, CandidateVisualStrategy::ExactFooterFaces);
+    assert_eq!(result.visual.total_references, 4);
+    assert_eq!(result.visual.candidate_count, 1);
+    assert_eq!(result.visual.descriptors_scored, 1);
+    assert_eq!(result.visual.geometry_attempted, 1);
+    assert_eq!(result.visual.geometry_verified_count, 1);
+    assert_eq!(result.identity.status, CombinedStatus::VerifiedShortlist);
+    assert_eq!(result.identity.card.unwrap().oracle_id, target.oracle_id);
+    assert!(result.printing.card.is_none());
+    assert!(footer_verification.is_none());
+    assert!(!result.visual.search_complete);
+}
+
+/// A strong conflicting title cannot be dropped by the exact-footer pass or expanded retry.
+#[test]
+fn indexed_footer_conflict_retains_the_failed_exact_pass_and_abstains_after_fallback() {
+    let directory = Directory::new();
+    let target = card("target", "correct", "Secret Portrait", "101");
+    let wrong = card("wrong", "different", "Wrong Exact Title", "102");
+    let image = portrait(7);
+    let mut builder = ShardedIndexBuilder::new(&directory.0, 1).unwrap();
+    builder.add(target.clone(), &image).unwrap();
+    builder.add(wrong.clone(), &portrait(19)).unwrap();
+    let visual = builder.finish().unwrap();
+    let titles = super::super::evidence::TitleIndex::from_visual_index(&visual).unwrap();
+    let footers = super::super::evidence::FooterIndex::from_visual_index(&visual).unwrap();
+    let FieldIdentification {
+        result,
+        visual_strategy,
+        footer_verification,
+    } = identify_fields_with(
+        &visual,
+        &titles,
+        &footers,
+        &image,
+        &TextObservations {
+            title: wrong.name,
+            footer: "101 TST EN".into(),
+            ..TextObservations::default()
+        },
+        &MatchOptions::default(),
+        5,
+        &CandidateOptions {
+            max_descriptors: 8,
+            max_geometry: 8,
+            orientations: CandidateOrientations::Upright,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        visual_strategy,
+        CandidateVisualStrategy::ExpandedTextCandidates
+    );
+    assert_eq!(footer_verification.as_ref().unwrap().candidate_count, 1);
+    assert_eq!(result.visual.candidate_count, 2);
+    assert_eq!(result.identity.status, CombinedStatus::Conflict);
+    assert!(result.identity.card.is_none());
+    assert!(result.conflicts.iter().any(|conflict| !conflict.resolved
+        && conflict.sources.contains(&EvidenceSource::Title)
+        && conflict.sources.contains(&EvidenceSource::Footer)));
+    assert!(result.timings.visual_matching >= result.visual.timings.total);
+}
+
+/// New field diagnostics preserve old Rust literals and the existing flat JSON contract.
+#[test]
+fn field_identification_wrapper_preserves_candidate_api_and_flat_wire_format() {
+    let directory = Directory::new();
+    let target = card("target", "correct", "Invented Portrait", "101");
+    let image = portrait(7);
+    let mut builder = ShardedIndexBuilder::new(&directory.0, 1).unwrap();
+    builder.add(target.clone(), &image).unwrap();
+    let visual = builder.finish().unwrap();
+    let titles = super::super::evidence::TitleIndex::from_metadata([target]).unwrap();
+    let base = identify_title_with(
+        &visual,
+        &titles,
+        &image,
+        &TextObservations::default(),
+        &MatchOptions::default(),
+        5,
+        &CandidateOptions::default(),
+    )
+    .unwrap();
+    // Keep the original public literal field list explicit as a source-compatibility check.
+    let literal = CandidateIdentification {
+        observations: base.observations,
+        text: base.text,
+        visual: base.visual,
+        identity: base.identity,
+        printing: base.printing,
+        conflicts: base.conflicts,
+        timings: base.timings,
+    };
+    let legacy = serde_json::to_value(&literal).unwrap();
+    let default_wrapper = FieldIdentification {
+        result: literal.clone(),
+        visual_strategy: CandidateVisualStrategy::default(),
+        footer_verification: None,
+    };
+    assert_eq!(serde_json::to_value(&default_wrapper).unwrap(), legacy);
+    let from_legacy: FieldIdentification = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(
+        from_legacy.visual_strategy,
+        CandidateVisualStrategy::ExpandedTextCandidates
+    );
+    assert!(from_legacy.footer_verification.is_none());
+    assert_eq!(serde_json::to_value(&from_legacy.result).unwrap(), legacy);
+
+    let diagnostic = FieldIdentification {
+        footer_verification: Some(literal.visual.clone()),
+        result: literal,
+        visual_strategy: CandidateVisualStrategy::ExactFooterFaces,
+    };
+    let actual = serde_json::to_value(&diagnostic).unwrap();
+    let mut expected = legacy.clone();
+    expected["visual_strategy"] = serde_json::json!("exact_footer_faces");
+    expected["footer_verification"] =
+        serde_json::to_value(&diagnostic.footer_verification).unwrap();
+    assert_eq!(actual, expected);
+    assert!(actual.get("result").is_none());
+    let restored: FieldIdentification = serde_json::from_value(actual.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&restored).unwrap(), actual);
+    let legacy_reader: CandidateIdentification = serde_json::from_value(actual).unwrap();
+    assert_eq!(serde_json::to_value(&legacy_reader).unwrap(), legacy);
+}
