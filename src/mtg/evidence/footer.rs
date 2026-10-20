@@ -6,8 +6,8 @@ use std::collections::{HashMap, HashSet};
 use crate::{CardMetadata, Error};
 
 use super::{
-    TextMatch, collector_tokens, footer_language_code, footer_languages, footer_lookup_text,
-    make_match, normalize, normalize_collector, normalize_number, tokens,
+    TextMatch, attached_rarity_collector, collector_tokens, footer_language_code, footer_languages,
+    footer_lookup_text, make_match, normalize, normalize_collector, normalize_number, tokens,
 };
 
 /// Exact collector-footer source retaining every matching physical face.
@@ -130,7 +130,10 @@ impl FooterIndex {
     pub fn propose_footer_printings(&self, observed_footer: &str) -> Vec<TextMatch> {
         let lookup_text = footer_lookup_text(observed_footer);
         let footer: HashSet<_> = tokens(&lookup_text).into_iter().collect();
-        let mut collectors: HashSet<_> = collector_tokens(observed_footer).into_iter().collect();
+        let mut collectors: HashSet<_> =
+            collector_tokens(observed_footer, |token| self.sets.contains_key(token))
+                .into_iter()
+                .collect();
         let glued = self.glued_keys(&lookup_text);
         let mut sets: Vec<_> = footer
             .iter()
@@ -236,17 +239,10 @@ impl FooterIndex {
         for raw in lower.split(|character: char| {
             !character.is_alphanumeric() && character != '★' && character != '/'
         }) {
-            if raw.len() > 128 || raw.is_empty() {
+            if raw.len() > 128 || raw.is_empty() || self.sets.contains_key(raw) {
                 continue;
             }
-            let token = if raw.len() > 1
-                && matches!(raw.as_bytes()[0], b'r' | b'm' | b'c' | b'u' | b'p' | b't')
-                && raw.as_bytes()[1].is_ascii_digit()
-            {
-                &raw[1..]
-            } else {
-                raw
-            };
+            let token = attached_rarity_collector(raw).unwrap_or(raw);
             if !token.starts_with(|character: char| character.is_ascii_digit()) {
                 continue;
             }
@@ -268,7 +264,9 @@ impl FooterIndex {
                         continue;
                     }
                     let separated = format!("{prefix} {} {tail}", &token[split..end]);
-                    for number in collector_tokens(&separated) {
+                    for number in
+                        collector_tokens(&separated, |token| self.sets.contains_key(token))
+                    {
                         if self.numbers.contains_key(&number) {
                             keys.push(GluedFooterKey {
                                 set,
@@ -559,6 +557,150 @@ mod tests {
         }
     }
 
+    /// Literal rarity boundaries preserve full collector fields and explicit language conflicts.
+    #[test]
+    fn attached_rarity_with_separate_set_preserves_collector_and_language() {
+        let index = FooterIndex::from_metadata([
+            card("collector", "sld", "001202", "en"),
+            card("suffix", "m15", "127a", "en"),
+            card("star", "m15", "127★", "en"),
+            card("denominator", "m15", "269", "en"),
+        ])
+        .unwrap();
+        for footer in ["M1202 SLD·EN", "R001202 SLD EN", "M1202 SLDEN"] {
+            let hits = index.propose_footer_printings(footer);
+            assert_eq!(hits.len(), 1, "{footer}");
+            assert_eq!(hits[0].card.id, "collector");
+            assert_eq!(hits[0].card.collector_number.as_deref(), Some("001202"));
+            assert_eq!(hits[0].language_match, Some(true));
+        }
+        for (footer, expected) in [
+            ("U00127a / 269 M15 EN", "suffix"),
+            ("C00127★ M15 EN", "star"),
+        ] {
+            let hits = index.propose_footer_printings(footer);
+            assert_eq!(hits.len(), 1, "{footer}");
+            assert_eq!(hits[0].card.id, expected);
+        }
+        let hits = index.propose_footer_printings("M1202 SLD JP");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].language_match, Some(false));
+        for footer in [
+            "M1202",
+            "MM1202 SLD EN",
+            "A1202 SLD EN",
+            "M12O2 SLD EN",
+            "M1202 S1D EN",
+            "M1202a SLD EN",
+            "R00007 / 1202 SLD EN",
+            "SLD EN ©M1202",
+        ] {
+            assert!(
+                index.propose_footer_printings(footer).is_empty(),
+                "{footer}"
+            );
+        }
+        let full = super::super::TextIndex::from_metadata([
+            card("collector", "sld", "001202", "en"),
+            card("denominator", "sld", "269", "en"),
+        ])
+        .unwrap();
+        let hits = full.search_footer_printings("M001202 / 269 SLD EN", usize::MAX);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].card.id, "collector");
+    }
+
+    /// Core, Commander, Portal and token set codes cannot supply their own collector number.
+    #[test]
+    fn registered_sets_are_not_reinterpreted_as_attached_rarity_collectors() {
+        for (set, phantom_number) in [("m15", "15"), ("c17", "17"), ("p02", "2"), ("t30a", "30a")] {
+            let cards = [
+                card("wanted", set, "127", "en"),
+                card("phantom", set, phantom_number, "en"),
+                card("cross-pair", "sld", phantom_number, "en"),
+            ];
+            let compact = FooterIndex::from_metadata(cards.iter()).unwrap();
+            let full = super::super::TextIndex::from_metadata(cards.iter().cloned()).unwrap();
+            let check = |footer: &str, expected: &[&str]| {
+                let observations = super::super::TextObservations {
+                    footer: footer.into(),
+                    ..super::super::TextObservations::default()
+                };
+                for hits in [
+                    compact.propose_footer_printings(footer),
+                    full.search_footer_printings(footer, usize::MAX),
+                    full.search(&observations),
+                    super::super::search(cards.iter(), &observations),
+                ] {
+                    assert_eq!(
+                        hits.iter()
+                            .map(|hit| hit.card.id.as_str())
+                            .collect::<Vec<_>>(),
+                        expected,
+                        "{footer}"
+                    );
+                }
+            };
+            check(&format!("{} EN", set.to_uppercase()), &[]);
+            check(&format!("{} SLD EN", set.to_uppercase()), &[]);
+            check(&format!("00127/269 {} EN", set.to_uppercase()), &["wanted"]);
+            check(
+                &format!("R00127/269 {} EN", set.to_uppercase()),
+                &["wanted"],
+            );
+        }
+    }
+
+    /// Year-like collectors require literal family-set context and never use a denominator.
+    #[test]
+    fn secret_lair_family_year_collectors_keep_copyright_and_denominator_guards() {
+        let sets = ["sld", "slx", "slc", "slp", "slu", "pssc"];
+        let index = FooterIndex::from_metadata(
+            sets.into_iter()
+                .flat_map(|set| [card(set, set, "1995", "en"), card(set, set, "2020", "en")])
+                .enumerate()
+                .map(|(position, mut card)| {
+                    card.id.push_str(&position.to_string());
+                    card
+                })
+                .chain([card("unrelated", "tst", "2020", "en")]),
+        )
+        .unwrap();
+        for set in sets {
+            for footer in [
+                format!("1995 {set}·EN"),
+                format!("2020{set}·EN"),
+                format!("R2020 {set} EN"),
+                format!("M01995 {set} EN"),
+                format!("R2020 / 9999 {set} EN"),
+            ] {
+                let hits = index.propose_footer_printings(&footer);
+                assert_eq!(hits.len(), 1, "{footer}");
+                assert_eq!(hits[0].card.set.as_deref(), Some(set));
+                assert_eq!(hits[0].language_match, Some(true));
+            }
+        }
+        for footer in [
+            "2020 TST EN",
+            "R2020 TST EN",
+            "SLC EN ©2020",
+            "SLC EN ©M2020",
+            "SLC EN M2020 Wizards of the Coast",
+            "SLC 2020 ©",
+            "M2020 © SLC EN",
+            "007/2020 SLC EN",
+            "007 / 2020 SLC EN",
+            "R007 / 2020 SLC EN",
+            "2020 S1C EN",
+            "©2020SLCEN",
+        ] {
+            assert!(
+                index.propose_footer_printings(footer).is_empty(),
+                "{footer}"
+            );
+        }
+    }
+
     /// Documented unprinted suffix aliases retain metadata variants and all collisions.
     #[test]
     fn secret_lair_printed_aliases_keep_physical_ambiguity() {
@@ -607,6 +749,7 @@ mod tests {
             "001 M = SLD 340 SLX EN",
             "001 M =SLD340★ SLX EN",
             "001 M =SLD340SLX EN",
+            "M001 =SLD340 SLX EN",
         ] {
             let hits = index.propose_footer_printings(footer);
             assert_eq!(hits.len(), 1, "{footer}");

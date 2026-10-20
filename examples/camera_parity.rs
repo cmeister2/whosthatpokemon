@@ -45,19 +45,45 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         metadata = String::from_utf8(metadata_bytes)?;
     }
+    let samples = manifest["samples"]
+        .as_array()
+        .ok_or_else(|| io::Error::other("missing public samples"))?;
+    let mut inputs = samples
+        .iter()
+        .map(|sample| Ok((sample.clone(), path(&sample["image"])?)))
+        .collect::<Result<Vec<_>, io::Error>>()?;
+    // This canonical printing is physically inverted. Keep this regression query outside
+    // the deployment's seven gallery samples and acquire it just like a lazy reference.
+    let arvinox_id = "0fbaa2f0-9ad0-4ce2-8ce6-359d01bd524c";
+    let arvinox = {
+        let catalogue: serde_json::Value = serde_json::from_str(&metadata)?;
+        catalogue["cards"]
+            .as_array()
+            .and_then(|cards| {
+                cards.iter().find(|card| {
+                    card["game"] == "mtg" && card["id"] == arvinox_id && card["face_index"] == 0
+                })
+            })
+            .cloned()
+            .ok_or_else(|| io::Error::other("missing inverted Arvinox public reference"))?
+    };
+    let (_, source) = acquire_reference(&arvinox, &output, cache.as_deref())?;
+    inputs.push((
+        serde_json::json!({
+            "id":"inverted-reference-arvinox", "cropped":true, "layout":"modern",
+        }),
+        output.join(source),
+    ));
     let mut engine = RemoteBrowserEngine::new(
         &metadata,
         &fs::read(path(&manifest["model"]["path"])?)?,
         &fs::read_to_string(path(&manifest["model"]["config_path"])?)?,
     )
     .map_err(io::Error::other)?;
-    let samples = manifest["samples"]
-        .as_array()
-        .ok_or_else(|| io::Error::other("missing public samples"))?;
     let mut fixtures = Vec::new();
     let mut references = BTreeMap::new();
-    for sample in samples {
-        let source = whosthatpokemon::open_image(&path(&sample["image"])?)?;
+    for (sample, source) in inputs {
+        let source = whosthatpokemon::open_image(&source)?;
         let image = if source.width().max(source.height()) > 1280 {
             source.resize(1280, 1280, FilterType::Triangle)
         } else {
@@ -68,7 +94,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let id = sample["id"]
             .as_str()
             .ok_or_else(|| io::Error::other("missing sample id"))?;
-        let variants = if id == "classic-bolt" { 2 } else { 1 };
+        let variants = if matches!(id, "classic-bolt" | "inverted-reference-arvinox") {
+            2
+        } else {
+            1
+        };
         for variant in 0..variants {
             let image = if variant == 1 {
                 image.rotate180()
@@ -146,6 +176,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if progress["state"] != "complete" || !progress["report"].is_object() {
                 return Err(io::Error::other("incomplete native result").into());
             }
+            if id == "inverted-reference-arvinox" {
+                check_inverted_reference(&progress["report"], if variant == 0 { 180 } else { 0 })?;
+            }
             fixtures.push(serde_json::json!({
                 "id": if variant == 1 {format!("{id}-inverted")} else {id.to_string()},
                 "width":rgba.width(),"height":rgba.height(),"rgba":filename,"cropped":cropped,"classic":classic,
@@ -165,6 +198,36 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "Recorded {} canonical reference images outside the deployment",
         references.len()
     );
+    Ok(())
+}
+
+/// Require a broad reference-alignment retry to preserve both its failed fast pass and OCR.
+#[cfg(all(feature = "web", feature = "ocr"))]
+fn check_inverted_reference(report: &serde_json::Value, rotation: u32) -> std::io::Result<()> {
+    use std::io;
+    let cards = report["cards"]
+        .as_array()
+        .filter(|cards| cards.len() == 1)
+        .ok_or_else(|| io::Error::other("Arvinox regression must contain one card"))?;
+    let card = &cards[0];
+    let selected = card["selected_attempt"]
+        .as_u64()
+        .and_then(|index| usize::try_from(index).ok())
+        .and_then(|index| card["attempts"].get(index))
+        .ok_or_else(|| io::Error::other("missing selected Arvinox attempt"))?;
+    let result = &selected["identification"];
+    let narrow = &selected["restricted_reference_alignment"];
+    if card["orientation_conflict"] != false
+        || selected["ocr"]["rotation_degrees"] != rotation
+        || result["identity"]["status"] != "verified_shortlist"
+        || result["identity"]["card"]["name"] != "Arvinox, the Mind Flail"
+        || narrow["identity"]["status"] != "unknown"
+        || narrow["observations"] != result["observations"]
+    {
+        return Err(io::Error::other(format!(
+            "Arvinox OCR {rotation}° must accept via a broad alignment retry and retain its failed narrow evidence"
+        )));
+    }
     Ok(())
 }
 

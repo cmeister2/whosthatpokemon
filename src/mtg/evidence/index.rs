@@ -265,7 +265,11 @@ impl TextIndex {
         let footer: HashSet<_> = tokens(&footer_lookup_text(&observations.footer))
             .into_iter()
             .collect();
-        let collector: HashSet<_> = collector_tokens(&observations.footer).into_iter().collect();
+        let collector: HashSet<_> = collector_tokens(&observations.footer, |token| {
+            self.footer_sets.contains_key(token)
+        })
+        .into_iter()
+        .collect();
         let languages = footer_languages(footer.iter().map(String::as_str));
         let query_rules = rule_tokens(&observations.rules.chars().take(16_384).collect::<String>());
         let enough_rules =
@@ -431,7 +435,11 @@ impl TextIndex {
         let footer: HashSet<_> = tokens(&footer_lookup_text(observed_footer))
             .into_iter()
             .collect();
-        let collectors: HashSet<_> = collector_tokens(observed_footer).into_iter().collect();
+        let collectors: HashSet<_> = collector_tokens(observed_footer, |token| {
+            self.footer_sets.contains_key(token)
+        })
+        .into_iter()
+        .collect();
         if footer.is_empty() || collectors.is_empty() {
             return Vec::new();
         }
