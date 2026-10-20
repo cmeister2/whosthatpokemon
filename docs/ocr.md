@@ -86,7 +86,11 @@ locator targets conventional bottom-left portrait collector rows. Unusual
 positions, older layouts or missing identifiers can produce no footer match.
 
 `--rotation` accepts `0` or `180`; the opposite orientation is tried when the
-first combined result does not accept an identity. The faster
+first combined result does not accept an identity. If both abstain, matching
+can retry their retained readings against both reference alignments: an enrolled
+scan can itself be upside down. This retry preserves the literal OCR orientation
+and the failed result in `restricted_reference_alignment`; it never repeats OCR
+or replaces an accepted fast decision. The faster
 `--title-model small` remains the default recognizer for both fields; use
 `--title-model default` for the language registry's larger model.
 `--ocr-threads 4` is the default RTen worker count. The engine and its inference
@@ -96,7 +100,8 @@ Exact set/collector postings propose physical faces before visual verification.
 Every matching face and language alternative remains visible. Known unprinted
 Secret Lair collector suffixes are indexed as explicit aliases; collisions stay
 ambiguous. Glued literal number/set fields are separated using registered keys,
-without correcting OCR characters or replacing observed text. Copyright years
+including attached rarity markers, without correcting OCR characters or replacing
+observed text. Registered set tokens such as `M15` remain set codes. Copyright years
 and SLX counterpart annotations cannot silently become collector keys.
 
 When a usable collector key is present, the visual stage checks those exact
@@ -115,6 +120,14 @@ This matters for altered cards that retain an older card's printed collector
 bar or artwork. Strong contradictions, language conflicts and omitted groups
 remain explicit. Accepted identities retain their shortlist scope; the footer
 does not establish a globally unique printing or calibrated confidence.
+
+For an unresolved crop, a slower invocation can use `--title-model default
+--max-candidates 1024 --max-geometry 64`. Larger budgets only widen text-proposed
+candidate verification; they cannot recover a card whose title and footer
+produce no proposals. Sideways designs, absent collector bars and altered cards
+retaining another identity's artwork need additional retrieval or verification.
+The global descriptor combines full-face and artwork measurements; it does not
+independently prove that overprinted title or rules text matches a candidate.
 
 Output retains every attempted orientation, literal title and footer OCR, model
 provenance, ranked candidates, geometry and the selected attempt. `ocr_ms`

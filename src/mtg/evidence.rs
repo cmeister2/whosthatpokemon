@@ -119,7 +119,14 @@ pub fn search<'a>(
     let cards: Vec<_> = cards.into_iter().collect();
     let title = normalize(&observations.title.chars().take(512).collect::<String>());
     let footer = tokens(&footer_lookup_text(&observations.footer));
-    let collector_numbers = collector_tokens(&observations.footer);
+    let registered_sets: HashSet<_> = cards
+        .iter()
+        .filter_map(|card| card.set.as_deref())
+        .map(normalize)
+        .collect();
+    let collector_numbers = collector_tokens(&observations.footer, |token| {
+        registered_sets.contains(token)
+    });
     let languages = footer_languages(footer.iter().map(String::as_str));
     let rules = rule_tokens(&observations.rules.chars().take(16_384).collect::<String>());
     let enough_rules = rules.len() >= 4 && rules.iter().map(String::len).sum::<usize>() >= 20;
@@ -347,8 +354,11 @@ fn normalize_collector(text: &str) -> String {
         .collect()
 }
 
-/// Read collector numerators without treating denominators or copyright years as keys.
-fn collector_tokens(text: &str) -> Vec<String> {
+/// Read collector numerators without reinterpreting registered sets, denominators or years.
+///
+/// Complete normalized set codes take precedence over attached rarity parsing,
+/// so a code such as `m15` cannot manufacture collector number `15`.
+fn collector_tokens(text: &str, is_registered_set: impl Fn(&str) -> bool) -> Vec<String> {
     let bounded = footer_lookup_text(text);
     let characters: Vec<_> = bounded.chars().collect();
     let compact: String = characters
@@ -392,13 +402,48 @@ fn collector_tokens(text: &str) -> Vec<String> {
             }
         }
     }
+    // A rarity can be attached to its collector without OCR changing any glyphs.
+    // Only introduce this additional boundary before a copyright marker; legacy
+    // numeric collectors after the copyright line retain their existing handling.
+    let before_copyright = compact.split('©').next().unwrap_or_default();
+    let words: Vec<_> = before_copyright
+        .to_lowercase()
+        .split(|character: char| {
+            !character.is_alphanumeric() && character != '★' && character != '/'
+        })
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned)
+        .collect();
+    for token in &words {
+        if is_registered_set(token) {
+            continue;
+        }
+        let Some(collector) = attached_rarity_collector(token) else {
+            continue;
+        };
+        let numerator = collector.split('/').next().unwrap_or_default();
+        if !collector.contains('/')
+            && numerator.len() == 4
+            && numerator
+                .parse::<u32>()
+                .is_ok_and(|value| (1900..=2099).contains(&value))
+        {
+            continue;
+        }
+        let number = normalize_number(&normalize_collector(numerator));
+        if !result.contains(&number) {
+            result.push(number);
+        }
+    }
     // Recent Secret Lair collectors overlap the copyright-year range. Accept
     // those bare four-digit tokens only in the documented collector/set column
     // order, before any copyright marker. A set beside a copyright row cannot
     // turn that row's year into a collector key.
-    let before_copyright = bounded.split('©').next().unwrap_or_default();
-    let words = tokens(before_copyright);
     for (position, token) in words.iter().enumerate() {
+        if is_registered_set(token) {
+            continue;
+        }
+        let token = attached_rarity_collector(token).unwrap_or(token);
         if token.len() != 4
             || !token
                 .parse::<u32>()
@@ -407,7 +452,12 @@ fn collector_tokens(text: &str) -> Vec<String> {
             continue;
         }
         let secret_set = |value: Option<&String>| {
-            value.is_some_and(|value| matches!(value.as_str(), "sld" | "slx"))
+            value.is_some_and(|value| {
+                matches!(
+                    value.as_str(),
+                    "sld" | "slx" | "slc" | "slp" | "slu" | "pssc"
+                )
+            })
         };
         let rarity = |value: Option<&String>| {
             value.is_some_and(|value| matches!(value.as_str(), "c" | "u" | "r" | "m" | "p" | "t"))
@@ -419,11 +469,22 @@ fn collector_tokens(text: &str) -> Vec<String> {
             && words
                 .get(position + 1)
                 .is_some_and(|value| footer_language_code(value).is_some());
-        if (followed_by_set || after_set_with_language) && !result.contains(token) {
-            result.push(token.clone());
+        if (followed_by_set || after_set_with_language)
+            && !result.iter().any(|number| number == token)
+        {
+            result.push(token.to_owned());
         }
     }
     result
+}
+
+/// Separate one literal rarity marker from a following numeric collector field.
+fn attached_rarity_collector(token: &str) -> Option<&str> {
+    let bytes = token.as_bytes();
+    (bytes.len() > 1
+        && matches!(bytes[0], b'r' | b'm' | b'c' | b'u' | b'p' | b't')
+        && bytes[1].is_ascii_digit())
+    .then(|| &token[1..])
 }
 
 /// Exclude counterpart annotations from exact footer keys while retaining literal OCR elsewhere.

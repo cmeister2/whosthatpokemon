@@ -35,6 +35,13 @@ pub struct IdentificationAttempt {
     pub footer_ocr: mtg::ocr::FooterOcrEvidence,
     /// Indexed title/footer proposals and candidate-only visual evidence.
     pub identification: mtg::identify::FieldIdentification,
+    /// Failed OCR-aligned verification before a broader reference-alignment retry.
+    ///
+    /// Retaining this result distinguishes matching a differently stored reference
+    /// from changing the observed text orientation. Present only after both fast
+    /// OCR orientations abstained and the caller allowed both reference rotations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restricted_reference_alignment: Option<mtg::identify::FieldIdentification>,
     /// Combined title and footer recognizer time for this orientation.
     pub ocr_ms: f64,
     /// Title recognizer time for this orientation.
@@ -118,6 +125,8 @@ pub(crate) struct CropIdentification {
     pending: Option<PreparedAttempt>,
     /// Active processing time, excluding time between calls.
     active_ms: f64,
+    /// Completed broad reference-alignment retries after both fast attempts failed.
+    alignment_retry: usize,
 }
 
 impl CropIdentification {
@@ -138,6 +147,7 @@ impl CropIdentification {
             attempts: Vec::new(),
             pending: None,
             active_ms: 0.0,
+            alignment_retry: 0,
         }
     }
 
@@ -180,7 +190,7 @@ impl CropIdentification {
         ) -> Result<FieldIdentification, Error>,
     ) -> Result<IdentifiedCard, Error> {
         self.options.validate()?;
-        loop {
+        while self.attempts.len() < 2 {
             let rotation = if self.attempts.is_empty() {
                 self.rotation
             } else {
@@ -230,6 +240,7 @@ impl CropIdentification {
                 ocr: pending.ocr,
                 footer_ocr: pending.footer_ocr,
                 identification,
+                restricted_reference_alignment: None,
                 ocr_ms: pending.title_ms + pending.footer_ms,
                 title_ocr_ms: pending.title_ms,
                 footer_ocr_ms: pending.footer_ms,
@@ -239,6 +250,7 @@ impl CropIdentification {
                 break;
             }
         }
+        self.retry_reference_alignment(identify)?;
         let selected_attempt = select_identification_attempt(&self.attempts);
         let orientation_conflict = attempts_disagree(&self.attempts);
         let timings = IdentifyCardTimings {
@@ -256,6 +268,46 @@ impl CropIdentification {
             attempts: std::mem::take(&mut self.attempts),
             timings,
         })
+    }
+
+    /// Reuse both failed OCR readings when reference storage orientation differs.
+    ///
+    /// A successful fast decision is preserved. Missing reference images retain
+    /// the retry position and its cumulative time without running OCR again.
+    fn retry_reference_alignment(
+        &mut self,
+        identify: &mut impl FnMut(
+            &TextObservations,
+            &CandidateOptions,
+        ) -> Result<FieldIdentification, Error>,
+    ) -> Result<(), Error> {
+        if self.options.orientations != crate::matching::CandidateOrientations::UprightAndInverted
+            || self
+                .attempts
+                .iter()
+                .any(|attempt| accepted_candidate_identity(&attempt.identification.result))
+        {
+            return Ok(());
+        }
+        while self.alignment_retry < self.attempts.len() {
+            let attempt = &mut self.attempts[self.alignment_retry];
+            let observations = TextObservations {
+                title: attempt.ocr.reading.text.clone(),
+                footer: attempt.footer_ocr.observations.footer.clone(),
+                ..TextObservations::default()
+            };
+            let started = Instant::now();
+            let result = identify(&observations, &self.options);
+            attempt.matching_ms += started.elapsed().as_secs_f64() * 1000.0;
+            let broader = result?;
+            let restricted = std::mem::replace(&mut attempt.identification, broader);
+            attempt.restricted_reference_alignment = Some(restricted);
+            self.alignment_retry += 1;
+            if accepted_candidate_identity(&attempt.identification.result) {
+                break;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -409,6 +461,346 @@ fn same_card_identity(left: &CardMetadata, right: &CardMetadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::matching::CandidateOrientations;
+
+    /// Invent an abstention for state-machine tests without implying any image verification ran.
+    fn alignment_result(reason: &str, accepted: bool) -> FieldIdentification {
+        let mut result: FieldIdentification = serde_json::from_value(serde_json::json!({
+            "observations": {"title": "", "footer": "", "rules": ""},
+            "text": {"title": [], "rules": [], "footer": [], "hints": []},
+            "visual": {
+                "recognition": {
+                    "status": "unknown", "identity_status": "unknown",
+                    "confidence": 0.0, "identity_confidence": 0.0, "candidates": []
+                },
+                "candidate_printing_margin": 0.0, "candidate_identity_margin": 0.0,
+                "scope": "supplied_candidates", "search_complete": false,
+                "total_references": 2, "proposal_count": 0, "matched_proposals": 0,
+                "candidate_count": 0, "descriptors_scored": 0, "geometry_attempted": 0,
+                "geometry_candidates": [], "geometry_verified_count": 0,
+                "budget_exhausted": false, "omitted_candidate_groups": 0,
+                "descriptor_budget_exhausted": false, "geometry_budget_exhausted": false,
+                "omitted_descriptor_groups": 0, "omitted_geometry_groups": 0,
+                "geometry_verified": []
+            },
+            "identity": {
+                "status": "unknown", "card": null, "scope": "supplied_candidates",
+                "sources": [], "reason": reason
+            },
+            "printing": {
+                "status": "unknown", "card": null, "scope": "supplied_candidates",
+                "reason": "Invented state fixture; no printing decision."
+            },
+            "conflicts": []
+        }))
+        .expect("invented state fixture is valid");
+        if accepted {
+            result.result.identity.status = mtg::identify::CombinedStatus::VerifiedShortlist;
+            result.result.identity.card = Some(mtg::identify::CardIdentity {
+                game: "invented".into(),
+                oracle_id: Some("alignment-identity".into()),
+                printing_id: None,
+                name: "Invented Observatory".into(),
+            });
+        }
+        result
+    }
+
+    /// Preserve all public OCR fields while making the absence of inference explicit.
+    fn retained_reading(text: &str, image_size: [u32; 2]) -> ocracle::Recognition {
+        let line = ocracle::Line {
+            text: text.into(),
+            confidence: 0.0,
+            bounds: [0, 0, image_size[0], image_size[1]],
+        };
+        ocracle::Recognition {
+            text: text.into(),
+            confidence: 0.0,
+            confidence_kind: "Synthetic state fixture; no inference executed.".into(),
+            method: "synthetic fixture".into(),
+            image_size,
+            lines: vec![line.clone()],
+            candidates: vec![ocracle::Candidate {
+                method: "synthetic fixture".into(),
+                text: text.into(),
+                confidence: 0.0,
+                lines: vec![line],
+            }],
+            model: ocracle::ModelIdentity {
+                backend: ocracle::InferenceBackend::Rten,
+                name: "Invented recognition fixture".into(),
+                language: "en".into(),
+                sha256: "a".repeat(64),
+                detector_sha256: None,
+            },
+        }
+    }
+
+    /// An already completed narrow pass with literal, explicitly oriented OCR evidence.
+    fn retained_attempt(rotation: u16) -> IdentificationAttempt {
+        let title = format!("Invented title at {rotation} degrees");
+        let footer = format!("R0042 TST EN {rotation}");
+        let observations = TextObservations {
+            title: title.clone(),
+            footer: footer.clone(),
+            ..TextObservations::default()
+        };
+        let mut identification = alignment_result(&format!("narrow {rotation}"), false);
+        identification.result.observations = observations.clone();
+        IdentificationAttempt {
+            ocr: mtg::ocr::TitleOcrEvidence {
+                rotation_degrees: rotation,
+                frame_layout: FrameLayout::Modern,
+                oriented_image_size: [488, 680],
+                crop_bounds: [30, 27, 360, 41],
+                reading: retained_reading(&title, [360, 41]),
+            },
+            footer_ocr: mtg::ocr::FooterOcrEvidence {
+                rotation_degrees: rotation,
+                frame_layout: FrameLayout::Modern,
+                oriented_image_size: [488, 680],
+                crop_bounds: [21, 634, 77, 29],
+                rows: vec![
+                    mtg::ocr::FooterOcrRow {
+                        crop_bounds: [21, 634, 70, 16],
+                        input_bounds: [0, 0, 70, 16],
+                    },
+                    mtg::ocr::FooterOcrRow {
+                        crop_bounds: [21, 646, 77, 17],
+                        input_bounds: [78, 0, 77, 17],
+                    },
+                ],
+                reading: retained_reading(&footer, [155, 17]),
+                observations: TextObservations {
+                    footer,
+                    ..TextObservations::default()
+                },
+            },
+            identification,
+            restricted_reference_alignment: None,
+            ocr_ms: 7.0,
+            title_ocr_ms: 3.0,
+            footer_ocr_ms: 4.0,
+            matching_ms: 10.0,
+        }
+    }
+
+    /// Seed completed fast passes so retry tests never construct an OCR engine or model.
+    fn retained_work(orientations: CandidateOrientations) -> CropIdentification {
+        let mut work = CropIdentification::new(
+            FrameLayout::Modern,
+            0,
+            [[0.0, 0.0], [488.0, 0.0], [488.0, 680.0], [0.0, 680.0]],
+            488.0 * 680.0,
+            &CandidateOptions {
+                max_descriptors: 7,
+                max_geometry: 3,
+                orientations,
+            },
+        );
+        work.attempts = vec![retained_attempt(0), retained_attempt(180)];
+        work
+    }
+
+    /// Snapshot raw crops, model identity and literal readings, independently of matching results.
+    fn ocr_snapshot(attempts: &[IdentificationAttempt]) -> serde_json::Value {
+        serde_json::to_value(
+            attempts
+                .iter()
+                .map(|attempt| {
+                    (
+                        &attempt.ocr,
+                        &attempt.footer_ocr,
+                        attempt.ocr_ms,
+                        attempt.title_ocr_ms,
+                        attempt.footer_ocr_ms,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("synthetic OCR evidence serializes")
+    }
+
+    /// Either successful fast orientation bypasses all broader matching work.
+    #[test]
+    fn accepted_fast_alignment_does_not_run_reference_retry() {
+        for accepted_position in 0..2 {
+            let mut work = retained_work(CandidateOrientations::UprightAndInverted);
+            work.attempts.truncate(accepted_position + 1);
+            work.attempts[accepted_position].identification =
+                alignment_result("fast accepted", true);
+            let before = serde_json::to_value(&work.attempts).unwrap();
+            work.retry_reference_alignment(&mut |_, _| {
+                panic!("accepted fast evidence must not request broader alignment")
+            })
+            .unwrap();
+            assert_eq!(work.alignment_retry, 0);
+            assert_eq!(serde_json::to_value(&work.attempts).unwrap(), before);
+        }
+    }
+
+    /// Broader retries retain narrow evidence and finish once, with or without an acceptance.
+    #[test]
+    fn broader_reference_alignment_preserves_narrow_provenance_and_literal_ocr() {
+        for accepted_position in 0..=2 {
+            let mut work = retained_work(CandidateOrientations::UprightAndInverted);
+            let ocr_before = ocr_snapshot(&work.attempts);
+            let narrow_before: Vec<_> = work
+                .attempts
+                .iter()
+                .map(|attempt| serde_json::to_value(&attempt.identification).unwrap())
+                .collect();
+            let mut calls = 0;
+            work.retry_reference_alignment(&mut |observations, options| {
+                assert_eq!(options, &work_options());
+                assert_eq!(
+                    observations.title,
+                    format!("Invented title at {} degrees", calls * 180)
+                );
+                let mut result = alignment_result("broader result", calls == accepted_position);
+                result.result.observations = observations.clone();
+                calls += 1;
+                Ok(result)
+            })
+            .unwrap();
+            let attempted = (accepted_position + 1).min(2);
+            assert_eq!(calls, attempted);
+            assert_eq!(work.alignment_retry, attempted);
+            assert_eq!(ocr_snapshot(&work.attempts), ocr_before);
+            for (position, attempt) in work.attempts.iter().enumerate() {
+                if position < attempted {
+                    assert_eq!(
+                        serde_json::to_value(
+                            attempt.restricted_reference_alignment.as_ref().unwrap()
+                        )
+                        .unwrap(),
+                        narrow_before[position]
+                    );
+                    assert_eq!(
+                        attempt.identification.result.identity.reason,
+                        "broader result"
+                    );
+                } else {
+                    assert!(attempt.restricted_reference_alignment.is_none());
+                    assert_eq!(
+                        serde_json::to_value(&attempt.identification).unwrap(),
+                        narrow_before[position]
+                    );
+                }
+            }
+            work.retry_reference_alignment(&mut |_, _| {
+                panic!("a completed broad retry must not be repeated")
+            })
+            .unwrap();
+        }
+    }
+
+    /// Nondefault budgets must survive broad retries as well as their orientation policy.
+    fn work_options() -> CandidateOptions {
+        CandidateOptions {
+            max_descriptors: 7,
+            max_geometry: 3,
+            orientations: CandidateOrientations::UprightAndInverted,
+        }
+    }
+
+    /// Repeated sparse-reference suspensions resume only unfinished matching and retain its time.
+    #[cfg(feature = "web")]
+    #[test]
+    fn missing_references_resume_alignment_without_repeating_completed_work_or_ocr() {
+        let mut work = retained_work(CandidateOrientations::UprightAndInverted);
+        let ocr_before = ocr_snapshot(&work.attempts);
+        let narrow_before: Vec<_> = work
+            .attempts
+            .iter()
+            .map(|attempt| serde_json::to_value(&attempt.identification).unwrap())
+            .collect();
+        let calls = std::cell::RefCell::new(Vec::new());
+        let mut identify = |observations: &TextObservations, options: &CandidateOptions| {
+            assert_eq!(options, &work_options());
+            let position = calls.borrow().len();
+            calls
+                .borrow_mut()
+                .push((observations.title.clone(), observations.footer.clone()));
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            match position {
+                0 => Ok(alignment_result("completed upright retry", false)),
+                1 => Err(Error::MissingReferenceImages(vec![17])),
+                2 => Err(Error::MissingReferenceImages(vec![18])),
+                3 => Ok(alignment_result("completed inverted retry", true)),
+                _ => panic!("completed reference-alignment retries must not run again"),
+            }
+        };
+        assert!(matches!(
+            work.retry_reference_alignment(&mut identify),
+            Err(Error::MissingReferenceImages(indices)) if indices == [17]
+        ));
+        assert_eq!(work.alignment_retry, 1);
+        let upright_time = work.attempts[0].matching_ms;
+        let first_inverted_time = work.attempts[1].matching_ms;
+        assert!(upright_time > 10.0);
+        assert!(first_inverted_time > 10.0);
+        assert!(work.attempts[0].restricted_reference_alignment.is_some());
+        assert!(work.attempts[1].restricted_reference_alignment.is_none());
+        assert_eq!(
+            serde_json::to_value(&work.attempts[1].identification).unwrap(),
+            narrow_before[1]
+        );
+        assert!(matches!(
+            work.retry_reference_alignment(&mut identify),
+            Err(Error::MissingReferenceImages(indices)) if indices == [18]
+        ));
+        assert_eq!(work.alignment_retry, 1);
+        assert_eq!(work.attempts[0].matching_ms, upright_time);
+        assert!(work.attempts[1].matching_ms > first_inverted_time);
+        let second_inverted_time = work.attempts[1].matching_ms;
+        assert_eq!(ocr_snapshot(&work.attempts), ocr_before);
+
+        work.retry_reference_alignment(&mut identify).unwrap();
+        assert_eq!(work.alignment_retry, 2);
+        assert_eq!(work.attempts[0].matching_ms, upright_time);
+        assert!(work.attempts[1].matching_ms > second_inverted_time);
+        assert_eq!(ocr_snapshot(&work.attempts), ocr_before);
+        for (position, attempt) in work.attempts.iter().enumerate() {
+            assert_eq!(
+                serde_json::to_value(attempt.restricted_reference_alignment.as_ref().unwrap())
+                    .unwrap(),
+                narrow_before[position]
+            );
+        }
+        assert_eq!(calls.borrow().len(), 4);
+        assert_eq!(
+            calls.borrow()[0],
+            (
+                "Invented title at 0 degrees".into(),
+                "R0042 TST EN 0".into()
+            )
+        );
+        assert!(calls.borrow()[1..].iter().all(|(title, footer)| {
+            title == "Invented title at 180 degrees" && footer == "R0042 TST EN 180"
+        }));
+        work.retry_reference_alignment(&mut identify).unwrap();
+        assert_eq!(calls.borrow().len(), 4);
+    }
+
+    /// A caller restricting reference alignment never opts into the broader fallback.
+    #[test]
+    fn single_reference_orientation_does_not_broaden_failed_attempts() {
+        for orientations in [
+            CandidateOrientations::Upright,
+            CandidateOrientations::Inverted,
+        ] {
+            let mut work = retained_work(orientations);
+            let before = serde_json::to_value(&work.attempts).unwrap();
+            work.retry_reference_alignment(&mut |_, _| {
+                panic!("a single-orientation caller did not permit broader alignment")
+            })
+            .unwrap();
+            assert_eq!(work.alignment_retry, 0);
+            assert_eq!(serde_json::to_value(&work.attempts).unwrap(), before);
+        }
+    }
+
     /// Orientation conflict compares strong identity sets rather than first-result order.
     #[test]
     fn title_orientation_conflict_uses_near_best_identity_sets() {

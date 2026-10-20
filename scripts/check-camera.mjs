@@ -42,30 +42,41 @@ const expectedIdentities = new Map([
   ['secret-lair-hadoken', ['Lightning Bolt']],
   ['secret-lair-mschf', ['Swords to Plowshares']],
   ['secret-lair-textless', ['Plains']],
+  ['inverted-reference-arvinox', ['Arvinox, the Mind Flail']],
+  ['inverted-reference-arvinox-inverted', ['Arvinox, the Mind Flail']],
 ]);
+const expectedRotations = new Map([
+  ['classic-bolt-inverted', 180],
+  ['inverted-reference-arvinox', 180],
+  ['inverted-reference-arvinox-inverted', 0],
+]);
+const identificationDecision = result => ({
+  status: result.identity.status,
+  identity: result.identity.card,
+  identity_scope: result.identity.scope,
+  sources: result.identity.sources,
+  printing: face(result.printing.card),
+  printing_status: result.printing.status,
+  strategy: result.visual_strategy || 'expanded_text_candidates',
+  footer_candidates: result.text.footer.map(hit => face(hit.card)),
+  title_candidates: result.text.title.map(hit => face(hit.card)),
+  descriptors: result.visual.descriptors_scored,
+  geometry: result.visual.geometry_attempted,
+  scope: result.visual.scope,
+  total_references: result.visual.total_references,
+  search_complete: result.visual.search_complete,
+});
 const decision = card => {
   const attempt = card.attempts[card.selected_attempt];
-  const result = attempt.identification;
   return {
     rotation: attempt.ocr.rotation_degrees,
     orientation_conflict: card.orientation_conflict,
     title: attempt.ocr.reading.text,
     footer: attempt.footer_ocr.reading.text,
     model_sha256: attempt.ocr.reading.model.sha256,
-    status: result.identity.status,
-    identity: result.identity.card,
-    identity_scope: result.identity.scope,
-    sources: result.identity.sources,
-    printing: face(result.printing.card),
-    printing_status: result.printing.status,
-    strategy: result.visual_strategy || 'expanded_text_candidates',
-    footer_candidates: result.text.footer.map(hit => face(hit.card)),
-    title_candidates: result.text.title.map(hit => face(hit.card)),
-    descriptors: result.visual.descriptors_scored,
-    geometry: result.visual.geometry_attempted,
-    scope: result.visual.scope,
-    total_references: result.visual.total_references,
-    search_complete: result.visual.search_complete,
+    ...identificationDecision(attempt.identification),
+    restricted_reference_alignment: attempt.restricted_reference_alignment
+      ? identificationDecision(attempt.restricted_reference_alignment) : null,
   };
 };
 try {
@@ -102,10 +113,25 @@ try {
     for (const attempt of selected) {
       assert.equal(attempt.identification.identity.status,
         attempt.identification.identity.card ? 'verified_shortlist' : 'unknown', fixture.id);
-      assert.equal(attempt.ocr.rotation_degrees, fixture.id === 'classic-bolt-inverted' ? 180 : 0, fixture.id);
+      assert.equal(attempt.ocr.rotation_degrees, expectedRotations.get(fixture.id) ?? 0, fixture.id);
       if (fixture.id.startsWith('secret-lair')) {
         assert.ok(attempt.identification.identity.sources.includes('footer'), 'collector footer resolves the variant');
       }
+    }
+    if (fixture.id.startsWith('inverted-reference-arvinox')) {
+      assert.equal(actual.cards.length, 1);
+      assert.equal(actual.cards[0].orientation_conflict, false);
+      const attempt = selected[0];
+      const narrow = attempt.restricted_reference_alignment;
+      assert.ok(narrow, `${fixture.id}: retain the failed restricted reference alignment`);
+      assert.equal(narrow.identity.status, 'unknown', 'the original fast alignment abstained');
+      assert.deepEqual(narrow.observations, attempt.identification.observations,
+        'broad alignment reuses literal OCR without changing its orientation');
+      assert.ok(attempt.identification.visual.geometry_verified_count > 0,
+        'the inverted canonical reference is geometrically verified after broad alignment');
+      assert.ok(attempt.identification.visual.recognition.candidates.some(candidate =>
+        candidate.card.id === '0fbaa2f0-9ad0-4ce2-8ce6-359d01bd524c' && candidate.card.face_index === 0),
+        'the physically inverted canonical printing participates in the successful retry');
     }
     if (fixture.id === 'four-cards') {
       assert.equal(selected[3].ocr.reading.text, 'Black Lotus');
@@ -133,6 +159,8 @@ try {
   assert.throws(() => engine.begin_rgba(1281, 1, new Uint8Array(1281 * 4), false, false), /RGBA/);
   assert.throws(() => engine.continue_frame(), /pending/);
   assert.ok(fixtures.some(f => f.id === 'classic-bolt-inverted'));
+  assert.ok(fixtures.some(f => f.id === 'inverted-reference-arvinox'));
+  assert.ok(fixtures.some(f => f.id === 'inverted-reference-arvinox-inverted'));
   assert.equal(fixtures.length, expectedIdentities.size);
   console.log(`Full catalogue: ${manifest.catalogue.faces.toLocaleString()} faces indexed; ${Object.keys(references).length} selected canonical images prepared for parity`);
   assert.equal(fixtures.filter(f => f.id.startsWith('secret-lair')).length, 3);
