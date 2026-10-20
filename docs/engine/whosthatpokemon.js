@@ -13,6 +13,111 @@ export class BrowserEngine {
         wasm.__wbg_browserengine_free(ptr, 0);
     }
     /**
+     * Apply the native conflict-aware policy to separate title and image evidence.
+     *
+     * Pass unchanged JSON from [`Self::lookup_title`] and [`Self::verify_candidates`].
+     * Acceptance preserves the candidate-only scope and exact-printing ambiguity;
+     * text proposals alone never accept a card. Callers time this stage separately.
+     *
+     * # Errors
+     *
+     * Returns an error string for invalid evidence JSON, options or serialization.
+     * @param {string} title
+     * @param {string} candidates_json
+     * @param {string} visual_json
+     * @returns {string}
+     */
+    combine_candidates(title, candidates_json, visual_json) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const ptr0 = passStringToWasm0(title, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(candidates_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(visual_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len2 = WASM_VECTOR_LEN;
+            const ret = wasm.browserengine_combine_candidates(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+            var ptr4 = ret[0];
+            var len4 = ret[1];
+            if (ret[3]) {
+                ptr4 = 0; len4 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        }
+    }
+    /**
+     * Extract and encode real card regions without running any catalogue search.
+     *
+     * This is the first stage of an OCR-first browser pipeline. Each returned
+     * image preserves its raw extraction orientation; OCR selects 0 or 180 degrees.
+     * Resource limits are the same as [`Self::scan`].
+     *
+     * # Errors
+     *
+     * Returns an error string for invalid input, extraction, PNG encoding or JSON.
+     * @param {Uint8Array} image_bytes
+     * @param {boolean} cropped
+     * @returns {string}
+     */
+    extract(image_bytes, cropped) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passArray8ToWasm0(image_bytes, wasm.__wbindgen_malloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browserengine_extract(this.__wbg_ptr, ptr0, len0, cropped);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * Retrieve up to five title identities through the startup-built title index.
+     *
+     * No visual descriptors are read or scored. The JSON result contains the
+     * literal indexed proposals and their bounded visual hints for the next stage.
+     *
+     * # Errors
+     *
+     * Returns an error string if JSON serialization fails.
+     * @param {string} title
+     * @returns {string}
+     */
+    lookup_title(title) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(title, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browserengine_lookup_title(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
      * Load and validate a JSON index without making network requests.
      *
      * # Errors
@@ -100,6 +205,45 @@ export class BrowserEngine {
             wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
         }
     }
+    /**
+     * Score and geometrically verify only the supplied title-candidate closure.
+     *
+     * Pass the JSON returned by [`Self::lookup_title`] and the unrotated raw crop.
+     * `rotation_degrees` selects the actual OCR orientation, either 0 or 180.
+     * At most 256 candidate descriptors and eight local feature banks are used;
+     * no complete-gallery fallback occurs. WASM verifies geometry serially.
+     *
+     * # Errors
+     *
+     * Returns an error string for invalid candidate JSON, rotation or image input,
+     * corrupt catalogue data, matching failure or JSON serialization failure.
+     * @param {Uint8Array} crop_bytes
+     * @param {string} candidates_json
+     * @param {number} rotation_degrees
+     * @returns {string}
+     */
+    verify_candidates(crop_bytes, candidates_json, rotation_degrees) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passArray8ToWasm0(crop_bytes, wasm.__wbindgen_malloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(candidates_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.browserengine_verify_candidates(this.__wbg_ptr, ptr0, len0, ptr1, len1, rotation_degrees);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
 }
 if (Symbol.dispose) BrowserEngine.prototype[Symbol.dispose] = BrowserEngine.prototype.free;
 function __wbg_get_imports() {
@@ -111,6 +255,10 @@ function __wbg_get_imports() {
         __wbg_getRandomValues_436a51d0629d84e1: function() { return handleError(function (arg0, arg1) {
             globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
         }, arguments); },
+        __wbg_now_6784956c157e62e1: function() {
+            const ret = performance.now();
+            return ret;
+        },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);

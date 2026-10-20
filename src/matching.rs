@@ -23,6 +23,31 @@ use serde::{Deserialize, Serialize};
 /// Portable local geometry used when global evidence is insufficient.
 mod local;
 
+/// Storage adapters and rankings shared by native and browser candidate searches.
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
+mod candidates;
+#[cfg(feature = "web")]
+pub(crate) use candidates::CatalogCandidateLookup;
+
+/// Lossless native persistence with separate global descriptors and local features.
+#[cfg(not(target_arch = "wasm32"))]
+mod binary;
+
+/// Native on-disk catalogues that keep only one descriptor shard in memory.
+#[cfg(not(target_arch = "wasm32"))]
+mod sharded;
+#[cfg(not(target_arch = "wasm32"))]
+pub use sharded::{ShardedIndex, ShardedIndexBuilder};
+
+/// Bounded candidate geometry with explicitly scoped visual evidence.
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
+mod shortlist;
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
+pub use shortlist::{
+    CandidateOptions, CandidateOrientations, CandidateRecognition, CandidateTimings,
+    GeometryVerification, ShortlistFace, ShortlistOptions, ShortlistScope, ShortlistedRecognition,
+};
+
 use crate::{CardMetadata, Error, MatchCandidate, MatchOptions, MatchStatus, Matcher, Recognition};
 
 /// On-disk index format; incompatible descriptor changes require a new version.
@@ -360,44 +385,15 @@ impl CatalogIndex {
             ));
         }
         let rgb = image.to_rgb8();
-        let rotations = [
-            rgb.clone(),
-            image::imageops::rotate90(&rgb),
-            image::imageops::rotate180(&rgb),
-            image::imageops::rotate270(&rgb),
-        ];
-        let queries: Vec<_> = rotations.iter().map(Descriptor::from_image).collect();
+        let queries = query_descriptors(&rgb);
         let mut explanations = Vec::with_capacity(self.references.len());
         let mut ranked: Vec<_> = self
             .references
             .iter()
             .map(|reference| {
-                let mut similarity = 0.0_f32;
-                let mut rotation_degrees = 0;
-                let mut best_view = 0;
-                for (rotation, query) in queries.iter().enumerate() {
-                    for (view_index, view) in reference.views.iter().enumerate() {
-                        let score = query.similarity(view);
-                        if score > similarity {
-                            similarity = score;
-                            rotation_degrees = rotation as u16 * 90;
-                            best_view = view_index;
-                        }
-                    }
-                }
-                let query = &queries[usize::from(rotation_degrees / 90)];
-                explanations.push(query.explain(
-                    &reference.views[best_view],
-                    &reference.card,
-                    INSETS[best_view],
-                    rotation_degrees,
-                ));
-                MatchCandidate {
-                    card: reference.card.clone(),
-                    similarity,
-                    confidence: 0.0,
-                    rotation_degrees,
-                }
+                let (candidate, explanation) = score_reference(reference, &queries);
+                explanations.push(explanation);
+                candidate
             })
             .collect();
         // Global decisions that meet the absolute gate retain the inexpensive
@@ -418,53 +414,13 @@ impl CatalogIndex {
             .zip(&self.references)
             .zip(&mut explanations)
         {
-            let Some(evidence) = local::match_evidence(&query_features, &reference.features) else {
-                continue;
-            };
-            if evidence.score <= candidate.similarity {
-                continue;
-            }
-            let Some(projection) =
-                imageproc::geometric_transformations::Projection::from_matrix(evidence.projection)
-            else {
-                continue;
-            };
-            let aligned = imageproc::geometric_transformations::warp(
+            used_geometry |= verify_geometry(
+                reference,
+                &query_features,
                 &normalized_query,
-                projection,
-                imageproc::geometric_transformations::Interpolation::Bilinear,
-                imageproc::geometric_transformations::Border::Constant(image::Rgb([0, 0, 0])),
+                candidate,
+                explanation,
             );
-            let aligned_descriptor = Descriptor::from_image(&aligned);
-            let Some(reference_descriptor) = reference.views.first() else {
-                continue;
-            };
-            // Card-frame/text homographies also need independent artwork intensity
-            // and colour agreement; geometrically consistent borders alone fail.
-            let art = signed_cosine(
-                &aligned_descriptor.art,
-                &reference_descriptor.art,
-                aligned_descriptor.art_norm,
-                reference_descriptor.art_norm,
-            );
-            let colour = unsigned_cosine(
-                &aligned_descriptor.histogram,
-                &reference_descriptor.histogram,
-                aligned_descriptor.histogram_norm,
-                reference_descriptor.histogram_norm,
-            );
-            // Strong registered artwork structure survives white-balance changes
-            // that shift hue/saturation; weaker structure also needs colour support.
-            if art < 0.25 || (art < 0.75 && colour < 0.50) {
-                continue;
-            }
-            candidate.similarity = evidence.score;
-            candidate.rotation_degrees = evidence.rotation_degrees;
-            explanation.similarity = evidence.score;
-            explanation.method = "verified_geometry";
-            explanation.registered_artwork_luminance = Some(art);
-            explanation.registered_artwork_colour = Some(colour);
-            used_geometry = true;
         }
         let mut result = finish_recognition(ranked, options)?;
         if used_geometry && result.status == MatchStatus::Matched {
@@ -507,6 +463,136 @@ impl Matcher for CatalogIndex {
         self.recognize_explained(image, options)
             .map(|(recognition, _)| recognition)
     }
+}
+
+/// Describe each right-angle orientation once, shared by in-memory and disk scans.
+fn query_descriptors(rgb: &RgbImage) -> Vec<Descriptor> {
+    [
+        rgb.clone(),
+        image::imageops::rotate90(rgb),
+        image::imageops::rotate180(rgb),
+        image::imageops::rotate270(rgb),
+    ]
+    .iter()
+    .map(Descriptor::from_image)
+    .collect()
+}
+
+/// Score one reference without making a partial-catalogue acceptance decision.
+fn score_reference(
+    reference: &Reference,
+    queries: &[Descriptor],
+) -> (MatchCandidate, VisualEvidence) {
+    let mut similarity = 0.0_f32;
+    let mut rotation_degrees = 0;
+    let mut best_view = 0;
+    for (rotation, query) in queries.iter().enumerate() {
+        for (view_index, view) in reference.views.iter().enumerate() {
+            let score = query.similarity(view);
+            if score > similarity {
+                similarity = score;
+                rotation_degrees = rotation as u16 * 90;
+                best_view = view_index;
+            }
+        }
+    }
+    let explanation = queries[usize::from(rotation_degrees / 90)].explain(
+        &reference.views[best_view],
+        &reference.card,
+        INSETS[best_view],
+        rotation_degrees,
+    );
+    (
+        MatchCandidate {
+            card: reference.card.clone(),
+            similarity,
+            confidence: 0.0,
+            rotation_degrees,
+        },
+        explanation,
+    )
+}
+
+/// Measure local correspondence and registered artwork for one reference candidate.
+fn match_geometry(
+    reference: &Reference,
+    query_features: &[local::Feature],
+    normalized_query: &RgbImage,
+    minimum_similarity: f32,
+) -> Option<GeometryMatch> {
+    let evidence = local::match_evidence(query_features, &reference.features)?;
+    if evidence.score <= minimum_similarity {
+        return None;
+    }
+    let projection =
+        imageproc::geometric_transformations::Projection::from_matrix(evidence.projection)?;
+    let aligned = imageproc::geometric_transformations::warp(
+        normalized_query,
+        projection,
+        imageproc::geometric_transformations::Interpolation::Bilinear,
+        imageproc::geometric_transformations::Border::Constant(image::Rgb([0, 0, 0])),
+    );
+    let aligned_descriptor = Descriptor::from_image(&aligned);
+    let reference_descriptor = reference.views.first()?;
+    // Shared frames/text must also agree with independently measured artwork.
+    let art = signed_cosine(
+        &aligned_descriptor.art,
+        &reference_descriptor.art,
+        aligned_descriptor.art_norm,
+        reference_descriptor.art_norm,
+    );
+    let colour = unsigned_cosine(
+        &aligned_descriptor.histogram,
+        &reference_descriptor.histogram,
+        aligned_descriptor.histogram_norm,
+        reference_descriptor.histogram_norm,
+    );
+    if art < 0.25 || (art < 0.75 && colour < 0.50) {
+        return None;
+    }
+    Some(GeometryMatch {
+        similarity: evidence.score,
+        rotation_degrees: evidence.rotation_degrees,
+        registered_artwork_luminance: art,
+        registered_artwork_colour: colour,
+    })
+}
+
+/// Successful local correspondence and independently registered artwork evidence.
+struct GeometryMatch {
+    /// Bounded correspondence, coverage and inlier score.
+    similarity: f32,
+    /// Closest clockwise right-angle query-to-reference orientation.
+    rotation_degrees: u16,
+    /// Registered artwork luminance agreement.
+    registered_artwork_luminance: f32,
+    /// Registered artwork colour agreement.
+    registered_artwork_colour: f32,
+}
+
+/// Apply the unchanged geometric verifier to one complete reference candidate.
+fn verify_geometry(
+    reference: &Reference,
+    query_features: &[local::Feature],
+    normalized_query: &RgbImage,
+    candidate: &mut MatchCandidate,
+    explanation: &mut VisualEvidence,
+) -> bool {
+    let Some(geometry) = match_geometry(
+        reference,
+        query_features,
+        normalized_query,
+        candidate.similarity,
+    ) else {
+        return false;
+    };
+    candidate.similarity = geometry.similarity;
+    candidate.rotation_degrees = geometry.rotation_degrees;
+    explanation.similarity = geometry.similarity;
+    explanation.method = "verified_geometry";
+    explanation.registered_artwork_luminance = Some(geometry.registered_artwork_luminance);
+    explanation.registered_artwork_colour = Some(geometry.registered_artwork_colour);
+    true
 }
 
 /// Retain explanations in the same order and with the same truncation as candidates.

@@ -8,13 +8,19 @@
 #[cfg(feature = "web")]
 pub mod browser;
 
-/// Optional CPU CLIP embeddings for images with difficult illumination or alignment.
-#[cfg(feature = "clip")]
+/// Monotonic elapsed timing on native targets and in the browser.
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
+mod clock;
+
+/// Optional native CPU CLIP embeddings for difficult illumination or alignment.
+#[cfg(all(feature = "clip", not(target_arch = "wasm32")))]
 pub mod clip;
 /// Errors shared by cataloguing, recognition, and image input.
 mod error;
 /// File decoding and EXIF orientation shared by references and scan inputs.
 mod input;
+/// Camera-friendly recognition scheduling and stable-card result reuse.
+pub mod live;
 /// Visual reference indexing and matching.
 pub mod matching;
 /// Magic: The Gathering catalogue ingestion and card identity metadata.

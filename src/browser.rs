@@ -12,6 +12,11 @@ use serde::Serialize;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+use crate::matching::{
+    CandidateOptions, CandidateOrientations, CandidateRecognition, CatalogCandidateLookup,
+};
+use crate::mtg::evidence::{TextObservations, TitleIndex};
+use crate::mtg::identify::{TextCandidates, collect_title_candidates, combine_candidates};
 use crate::{CatalogIndex, Error, MatchOptions, Recognition, matching::VisualEvidence};
 
 /// Maximum compressed photo bytes accepted by the browser engine.
@@ -59,6 +64,30 @@ pub struct DiagnosticReport {
     pub cards: Vec<DiagnosticCard>,
 }
 
+/// One actual rectified region, produced before OCR or visual matching.
+#[derive(Debug, Serialize)]
+pub struct ExtractedCard {
+    /// Detected corners in oriented source-image pixels.
+    pub corners: [[f32; 2]; 4],
+    /// Area enclosed by the detection in source-image square pixels.
+    pub area: f32,
+    /// PNG data URL of the unrotated extractor output for display.
+    pub crop_data_url: String,
+    /// The same unrotated output for independently chosen OCR orientation.
+    pub raw_crop_data_url: String,
+}
+
+/// Actual source geometry and crops before recognition begins.
+#[derive(Debug, Serialize)]
+pub struct ExtractionReport {
+    /// Width after applying input EXIF orientation.
+    pub width: u32,
+    /// Height after applying input EXIF orientation.
+    pub height: u32,
+    /// Rectified card images with no visual search or recognition attached.
+    pub cards: Vec<ExtractedCard>,
+}
+
 /// Reusable browser engine with a validated local reference index.
 #[derive(Debug)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
@@ -67,6 +96,10 @@ pub struct BrowserEngine {
     index: CatalogIndex,
     /// Higher-resolution extraction preserves small title and footer glyphs.
     extractor: CardExtractor,
+    /// Compact exact and bounded-fuzzy title lookup, built once at startup.
+    titles: TitleIndex,
+    /// Direct face, semantic identity and illustration postings, built once.
+    candidate_lookup: CatalogCandidateLookup,
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
@@ -87,7 +120,15 @@ impl BrowserEngine {
             ..ExtractorConfig::default()
         })
         .map_err(|error| error.to_string())?;
-        Ok(Self { index, extractor })
+        let titles =
+            TitleIndex::from_metadata(index.metadata()).map_err(|error| error.to_string())?;
+        let candidate_lookup = CatalogCandidateLookup::new(&index);
+        Ok(Self {
+            index,
+            extractor,
+            titles,
+            candidate_lookup,
+        })
     }
 
     /// Decode a local photo and return JSON containing real extraction diagnostics.
@@ -109,6 +150,110 @@ impl BrowserEngine {
             .map_err(|error| error.to_string())
     }
 
+    /// Extract and encode real card regions without running any catalogue search.
+    ///
+    /// This is the first stage of an OCR-first browser pipeline. Each returned
+    /// image preserves its raw extraction orientation; OCR selects 0 or 180 degrees.
+    /// Resource limits are the same as [`Self::scan`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string for invalid input, extraction, PNG encoding or JSON.
+    pub fn extract(&self, image_bytes: &[u8], cropped: bool) -> Result<String, String> {
+        self.extract_report(image_bytes, cropped)
+            .and_then(|report| serde_json::to_string(&report).map_err(Error::from))
+            .map_err(|error| error.to_string())
+    }
+
+    /// Retrieve up to five title identities through the startup-built title index.
+    ///
+    /// No visual descriptors are read or scored. The JSON result contains the
+    /// literal indexed proposals and their bounded visual hints for the next stage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if JSON serialization fails.
+    pub fn lookup_title(&self, title: &str) -> Result<String, String> {
+        let candidates = collect_title_candidates(&self.titles, title, 5);
+        serde_json::to_string(&candidates).map_err(|error| error.to_string())
+    }
+
+    /// Score and geometrically verify only the supplied title-candidate closure.
+    ///
+    /// Pass the JSON returned by [`Self::lookup_title`] and the unrotated raw crop.
+    /// `rotation_degrees` selects the actual OCR orientation, either 0 or 180.
+    /// At most 256 candidate descriptors and eight local feature banks are used;
+    /// no complete-gallery fallback occurs. WASM verifies geometry serially.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string for invalid candidate JSON, rotation or image input,
+    /// corrupt catalogue data, matching failure or JSON serialization failure.
+    pub fn verify_candidates(
+        &self,
+        crop_bytes: &[u8],
+        candidates_json: &str,
+        rotation_degrees: u16,
+    ) -> Result<String, String> {
+        let candidates: TextCandidates =
+            serde_json::from_str(candidates_json).map_err(|error| error.to_string())?;
+        let orientations = match rotation_degrees {
+            0 => CandidateOrientations::Upright,
+            180 => CandidateOrientations::Inverted,
+            _ => return Err("OCR orientation must be 0 or 180 degrees".into()),
+        };
+        let image = decode_input(crop_bytes).map_err(|error| error.to_string())?;
+        let bounded = if image.width().max(image.height()) > MAX_CROP_DIMENSION {
+            image.resize(MAX_CROP_DIMENSION, MAX_CROP_DIMENSION, FilterType::Triangle)
+        } else {
+            image
+        };
+        let image = DynamicImage::ImageRgb8(bounded.to_rgb8());
+        let result = self
+            .candidate_lookup
+            .recognize(
+                &self.index,
+                &image,
+                &MatchOptions::default(),
+                &CandidateOptions {
+                    orientations,
+                    ..CandidateOptions::default()
+                },
+                &candidates.hints,
+            )
+            .map_err(|error| error.to_string())?;
+        serde_json::to_string(&result).map_err(|error| error.to_string())
+    }
+
+    /// Apply the native conflict-aware policy to separate title and image evidence.
+    ///
+    /// Pass unchanged JSON from [`Self::lookup_title`] and [`Self::verify_candidates`].
+    /// Acceptance preserves the candidate-only scope and exact-printing ambiguity;
+    /// text proposals alone never accept a card. Callers time this stage separately.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string for invalid evidence JSON, options or serialization.
+    pub fn combine_candidates(
+        &self,
+        title: &str,
+        candidates_json: &str,
+        visual_json: &str,
+    ) -> Result<String, String> {
+        let candidates: TextCandidates =
+            serde_json::from_str(candidates_json).map_err(|error| error.to_string())?;
+        let visual: CandidateRecognition =
+            serde_json::from_str(visual_json).map_err(|error| error.to_string())?;
+        let observations = TextObservations {
+            title: title.into(),
+            ..TextObservations::default()
+        };
+        let combined =
+            combine_candidates(&observations, candidates, visual, &MatchOptions::default())
+                .map_err(|error| error.to_string())?;
+        serde_json::to_string(&combined).map_err(|error| error.to_string())
+    }
+
     /// Search enrolled metadata with independently supplied OCR observations.
     ///
     /// This returns a separate text ranking and does not alter visual confidence.
@@ -125,6 +270,68 @@ impl BrowserEngine {
 }
 
 impl BrowserEngine {
+    /// Return actual extraction outputs before any title or image lookup runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for input limits, extraction, PNG encoding or report limits.
+    pub fn extract_report(
+        &self,
+        image_bytes: &[u8],
+        cropped: bool,
+    ) -> Result<ExtractionReport, Error> {
+        let image = decode_input(image_bytes)?;
+        let (width, height) = (image.width(), image.height());
+        let mut cards = Vec::new();
+        let mut encoded_bytes = 0_usize;
+        let mut retain = |crop: &DynamicImage, corners, area| -> Result<(), Error> {
+            let raw_crop_data_url = data_url(crop)?;
+            encoded_bytes = encoded_bytes.saturating_add(raw_crop_data_url.len().saturating_mul(2));
+            if encoded_bytes > MAX_REPORT_IMAGE_BYTES {
+                return Err(Error::InvalidInput(
+                    "diagnostic crops exceed 16 MiB; scan fewer cards at once".into(),
+                ));
+            }
+            cards.push(ExtractedCard {
+                corners,
+                area,
+                crop_data_url: raw_crop_data_url.clone(),
+                raw_crop_data_url,
+            });
+            Ok(())
+        };
+        if cropped {
+            let bounded = if width.max(height) > MAX_CROP_DIMENSION {
+                image.resize(MAX_CROP_DIMENSION, MAX_CROP_DIMENSION, FilterType::Triangle)
+            } else {
+                image.clone()
+            };
+            retain(
+                &DynamicImage::ImageRgb8(bounded.to_rgb8()),
+                [
+                    [0.0, 0.0],
+                    [width as f32, 0.0],
+                    [width as f32, height as f32],
+                    [0.0, height as f32],
+                ],
+                width as f32 * height as f32,
+            )?;
+        } else {
+            for card in self.extractor.extract(&image)? {
+                retain(
+                    &DynamicImage::ImageRgb8(card.image),
+                    card.detection.corners.map(|point| [point.x, point.y]),
+                    card.detection.area,
+                )?;
+            }
+        }
+        Ok(ExtractionReport {
+            width,
+            height,
+            cards,
+        })
+    }
+
     /// Produce a structured diagnostic report using the browser implementation.
     ///
     /// # Errors
@@ -338,9 +545,13 @@ mod tests {
                 &image,
             )
             .unwrap();
+        let titles = TitleIndex::from_metadata(index.metadata()).unwrap();
+        let candidate_lookup = CatalogCandidateLookup::new(&index);
         let engine = BrowserEngine {
             index,
             extractor: CardExtractor::new(ExtractorConfig::default()).unwrap(),
+            titles,
+            candidate_lookup,
         };
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, ImageFormat::Png).unwrap();
@@ -353,5 +564,148 @@ mod tests {
             .unwrap();
         let crop = image::load_from_memory(&STANDARD.decode(raw).unwrap()).unwrap();
         assert_eq!((crop.width(), crop.height()), (350, 700));
+    }
+
+    /// Reusable generated image with enough distinctive structure for actual geometry.
+    fn portrait(seed: u32) -> DynamicImage {
+        DynamicImage::ImageRgb8(RgbImage::from_fn(168, 234, |x, y| {
+            if !(6..162).contains(&x) || !(6..228).contains(&y) {
+                Rgb([12, 12, 12])
+            } else if (38..134).contains(&y) {
+                let value = x.wrapping_mul(41 + seed * 19)
+                    ^ y.wrapping_mul(73 + seed * 31)
+                    ^ (x / (3 + seed % 4) * y / 7).wrapping_mul(53);
+                Rgb([
+                    (value & 255) as u8,
+                    ((value >> 3) & 255) as u8,
+                    ((value >> 6) & 255) as u8,
+                ])
+            } else if (145..215).contains(&y) && y % 11 < 2 {
+                Rgb([35, 35, 35])
+            } else {
+                Rgb([190, 182, 155])
+            }
+        }))
+    }
+
+    /// Build browser-only startup state from generated references without model files.
+    fn engine(index: CatalogIndex) -> BrowserEngine {
+        let titles = TitleIndex::from_metadata(index.metadata()).unwrap();
+        let candidate_lookup = CatalogCandidateLookup::new(&index);
+        BrowserEngine {
+            index,
+            extractor: CardExtractor::new(ExtractorConfig::default()).unwrap(),
+            titles,
+            candidate_lookup,
+        }
+    }
+
+    /// Encode lossless generated images without depending on any saved photo.
+    fn png(image: &DynamicImage) -> Vec<u8> {
+        let mut bytes = Cursor::new(Vec::new());
+        image.write_to(&mut bytes, ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    }
+
+    /// Extraction must succeed without catalogue records or any visual recognition.
+    #[test]
+    fn extraction_precedes_and_does_not_require_matching() {
+        let engine = engine(CatalogIndex::new());
+        let report = engine.extract_report(&png(&portrait(7)), true).unwrap();
+        assert_eq!((report.width, report.height), (168, 234));
+        assert_eq!(report.cards.len(), 1);
+        assert_eq!(
+            report.cards[0].crop_data_url,
+            report.cards[0].raw_crop_data_url
+        );
+        let serialized = serde_json::to_value(report).unwrap();
+        assert!(serialized["cards"][0].get("recognition").is_none());
+    }
+
+    /// Separated browser stages retain actual geometry and exact-printing abstention.
+    #[test]
+    fn browser_candidate_pipeline_preserves_scope_and_conflicting_ocr() {
+        let card = |id: &str, name: &str| crate::CardMetadata {
+            game: "test".into(),
+            id: id.into(),
+            name: name.into(),
+            oracle_id: Some(id.into()),
+            illustration_id: Some("shared-art".into()),
+            ..crate::CardMetadata::default()
+        };
+        let target = card("target", "Amber Clockmaker");
+        let alternative = card("alternative", "Violet Surveyor");
+        let mut index = CatalogIndex::new();
+        index.add(target, &portrait(7)).unwrap();
+        index.add(alternative, &portrait(19)).unwrap();
+        index
+            .add(
+                crate::CardMetadata {
+                    game: "test".into(),
+                    id: "unrelated".into(),
+                    name: "Unrelated Signal".into(),
+                    ..crate::CardMetadata::default()
+                },
+                &portrait(31),
+            )
+            .unwrap();
+        let engine = engine(index);
+        let image_bytes = png(&portrait(7));
+        let text = engine.lookup_title("Amber Clockmaker").unwrap();
+        let visual = engine.verify_candidates(&image_bytes, &text, 0).unwrap();
+        let result: crate::mtg::identify::CandidateIdentification = serde_json::from_str(
+            &engine
+                .combine_candidates("Amber Clockmaker", &text, &visual)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            result.visual.scope,
+            crate::matching::ShortlistScope::SuppliedCandidates
+        );
+        assert!(!result.visual.search_complete);
+        assert_eq!(result.visual.candidate_count, 2);
+        assert_eq!(result.visual.geometry_attempted, 2);
+        assert!(
+            result
+                .visual
+                .geometry_verified
+                .iter()
+                .any(|hit| hit.card.id == "target")
+        );
+        assert_eq!(
+            result.identity.status,
+            crate::mtg::identify::CombinedStatus::VerifiedShortlist
+        );
+        assert_eq!(
+            result.identity.card.unwrap().oracle_id.as_deref(),
+            Some("target")
+        );
+        assert!(result.printing.card.is_none());
+
+        let wrong_text = engine.lookup_title("Violet Surveyor").unwrap();
+        let wrong_visual = engine
+            .verify_candidates(&image_bytes, &wrong_text, 0)
+            .unwrap();
+        let result: crate::mtg::identify::CandidateIdentification = serde_json::from_str(
+            &engine
+                .combine_candidates("Violet Surveyor", &wrong_text, &wrong_visual)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            result.identity.status,
+            crate::mtg::identify::CombinedStatus::Conflict
+        );
+        assert!(result.identity.card.is_none());
+        assert!(!result.conflicts.is_empty());
+        assert!(engine.verify_candidates(&image_bytes, &text, 90).is_err());
+
+        let empty = engine.lookup_title("").unwrap();
+        let empty_visual = engine.verify_candidates(&image_bytes, &empty, 0).unwrap();
+        let result: CandidateRecognition = serde_json::from_str(&empty_visual).unwrap();
+        assert_eq!(result.descriptors_scored, 0);
+        assert_eq!(result.geometry_attempted, 0);
+        assert_eq!(result.recognition.status, crate::MatchStatus::Unknown);
     }
 }

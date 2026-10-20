@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::CardMetadata;
 
+mod index;
+
+pub use index::{TextIndex, TitleIdentityMatch, TitleIdentityProposal, TitleIndex, TitleProposer};
+
 /// Manually selected conventional portrait frame geometry.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -121,8 +125,12 @@ pub fn search<'a>(
     .filter(|code| footer.iter().any(|token| token == code))
     .collect();
     let rules = rule_tokens(&observations.rules.chars().take(16_384).collect::<String>());
-    let weights = document_weights(&cards);
     let enough_rules = rules.len() >= 4 && rules.iter().map(String::len).sum::<usize>() >= 20;
+    let weights = if enough_rules {
+        document_weights(&cards)
+    } else {
+        HashMap::new()
+    };
     let mut ranked = Vec::new();
     for card in cards {
         let title_similarity = (!title.is_empty())
@@ -153,8 +161,6 @@ pub fn search<'a>(
                     collector_numbers.contains(&expected)
                 })
         });
-        let title_score = title_similarity.unwrap_or(0.0) * 0.85;
-        let rules_score = rule_evidence.map_or(0.0, |(score, _)| score * 0.75);
         let language_match = if languages.len() == 1 {
             card.language
                 .as_deref()
@@ -162,63 +168,101 @@ pub fn search<'a>(
         } else {
             None
         };
-        let score = if footer_match {
-            match language_match {
-                Some(true) => 1.0,
-                None => 0.98,
-                Some(false) => 0.90,
-            }
-        } else {
-            (title_score.max(rules_score)
-                + if title_score >= 0.60 && rules_score >= 0.40 {
-                    0.05
-                } else {
-                    0.0
-                })
-            .min(0.95)
-        };
+        let score = match_score(
+            title_similarity,
+            rule_evidence,
+            footer_match,
+            language_match,
+        );
         if score == 0.0 {
             continue;
         }
-        let mut reasons = Vec::new();
-        if footer_match {
-            reasons.push(
-                "Exact set code and collector-number tokens; verify the OCR against the image."
-                    .into(),
-            );
-        }
-        if let Some(matches) = language_match {
-            reasons.push(
-                if matches {
-                    "Footer language token agrees with this printing."
-                } else {
-                    "Footer language token conflicts with this printing; inspect the OCR."
-                }
-                .into(),
-            );
-        }
-        if title_similarity.is_some() {
-            reasons.push(
-                "Fuzzy title comparison, preserving other printings with the same name.".into(),
-            );
-        }
-        if rule_evidence.is_some() {
-            reasons.push("Fuzzy rules comparison against printed or Oracle text; this supports identity, not a unique printing.".into());
-        }
-        ranked.push(TextMatch {
-            card: card.clone(),
+        ranked.push(make_match(
+            card,
             title_similarity,
-            rules_similarity: rule_evidence.map(|(score, _)| score),
-            rules_coverage: rule_evidence.map(|(_, coverage)| coverage),
+            rule_evidence,
             footer_match,
             language_match,
-            score,
-            reasons,
-        });
+        ));
     }
     ranked.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.card.id.cmp(&b.card.id)));
     ranked.truncate(5);
     ranked
+}
+
+/// Combine independent evidence without interpreting it as a correctness probability.
+fn match_score(
+    title_similarity: Option<f32>,
+    rule_evidence: Option<(f32, f32)>,
+    footer_match: bool,
+    language_match: Option<bool>,
+) -> f32 {
+    let title_score = title_similarity.unwrap_or(0.0) * 0.85;
+    let rules_score = rule_evidence.map_or(0.0, |(score, _)| score * 0.75);
+    if footer_match {
+        match language_match {
+            Some(true) => 1.0,
+            None => 0.98,
+            Some(false) => 0.90,
+        }
+    } else {
+        (title_score.max(rules_score)
+            + if title_score >= 0.60 && rules_score >= 0.40 {
+                0.05
+            } else {
+                0.0
+            })
+        .min(0.95)
+    }
+}
+
+/// Materialize one returned printing while preserving shared explanations and scores.
+fn make_match(
+    card: &CardMetadata,
+    title_similarity: Option<f32>,
+    rule_evidence: Option<(f32, f32)>,
+    footer_match: bool,
+    language_match: Option<bool>,
+) -> TextMatch {
+    let score = match_score(
+        title_similarity,
+        rule_evidence,
+        footer_match,
+        language_match,
+    );
+    let mut reasons = Vec::new();
+    if footer_match {
+        reasons.push(
+            "Exact set code and collector-number tokens; verify the OCR against the image.".into(),
+        );
+    }
+    if let Some(matches) = language_match {
+        reasons.push(
+            if matches {
+                "Footer language token agrees with this printing."
+            } else {
+                "Footer language token conflicts with this printing; inspect the OCR."
+            }
+            .into(),
+        );
+    }
+    if title_similarity.is_some() {
+        reasons
+            .push("Fuzzy title comparison, preserving other printings with the same name.".into());
+    }
+    if rule_evidence.is_some() {
+        reasons.push("Fuzzy rules comparison against printed or Oracle text; this supports identity, not a unique printing.".into());
+    }
+    TextMatch {
+        card: card.clone(),
+        title_similarity,
+        rules_similarity: rule_evidence.map(|(score, _)| score),
+        rules_coverage: rule_evidence.map(|(_, coverage)| coverage),
+        footer_match,
+        language_match,
+        score,
+        reasons,
+    }
 }
 
 /// Normalize case and punctuation without assuming ASCII-only card names.
@@ -341,6 +385,11 @@ fn normalize_number(token: &str) -> String {
 fn edit_similarity(a: &str, b: &str) -> f32 {
     let a: Vec<_> = a.chars().take(1024).collect();
     let b: Vec<_> = b.chars().take(1024).collect();
+    edit_similarity_characters(&a, &b)
+}
+
+/// Compare cached character sequences using the same score as string comparisons.
+fn edit_similarity_characters(a: &[char], b: &[char]) -> f32 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
     }

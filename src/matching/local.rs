@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 
+#[cfg(any(not(target_arch = "wasm32"), feature = "web", test))]
+use image::RgbImage;
 use image::{DynamicImage, GrayImage, imageops::FilterType};
 use serde::{Deserialize, Serialize};
 
@@ -26,11 +28,11 @@ const ITERATIONS: usize = 600;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct Feature {
     /// Horizontal normalized-image position in fixed-point units.
-    x: u16,
+    pub(super) x: u16,
     /// Vertical normalized-image position in fixed-point units.
-    y: u16,
+    pub(super) y: u16,
     /// Fixed-pattern rotated binary intensity comparisons.
-    bits: [u64; 4],
+    pub(super) bits: [u64; 4],
 }
 
 /// A feature correspondence in unit image coordinates.
@@ -97,6 +99,31 @@ pub(super) fn extract(image: &DynamicImage) -> Vec<Feature> {
     let base = image
         .resize_exact(WIDTH, HEIGHT, FilterType::Triangle)
         .to_luma8();
+    extract_luma(&base)
+}
+
+/// Extract descriptors from an RGB query already normalized for geometric verification.
+#[cfg(any(not(target_arch = "wasm32"), feature = "web", test))]
+pub(super) fn extract_normalized_rgb(image: &RgbImage) -> Vec<Feature> {
+    debug_assert_eq!(image.dimensions(), (WIDTH, HEIGHT));
+    // Keep DynamicImage's colour-space-aware conversion so this path produces
+    // byte-identical descriptors to `extract` for normalized RGB inputs.
+    let base = DynamicImage::ImageRgb8(image.clone()).to_luma8();
+    extract_luma(&base)
+}
+
+/// Reuse normalized RGB for native RGB queries and preserve other format conversions.
+#[cfg(any(not(target_arch = "wasm32"), feature = "web", test))]
+pub(super) fn extract_query(image: &DynamicImage, normalized_rgb: &RgbImage) -> Vec<Feature> {
+    if image.as_rgb8().is_some() {
+        extract_normalized_rgb(normalized_rgb)
+    } else {
+        extract(image)
+    }
+}
+
+/// Extract local features from normalized 8-bit luminance pixels.
+fn extract_luma(base: &GrayImage) -> Vec<Feature> {
     let pairs = test_pairs();
     let mut features = Vec::new();
     for level in 0..LEVELS {
@@ -107,7 +134,7 @@ pub(super) fn extract(image: &DynamicImage) -> Vec<Feature> {
         if width < 50 || height < 50 {
             break;
         }
-        let layer = image::imageops::resize(&base, width, height, FilterType::Triangle);
+        let layer = image::imageops::resize(base, width, height, FilterType::Triangle);
         let corners = imageproc::corners::oriented_fast(&layer, Some(16), 3000, 18, Some(1701));
         let smooth = imageproc::filter::gaussian_blur_f32(&layer, 1.5);
         let mut occupied = HashSet::new();
@@ -162,8 +189,26 @@ pub(super) fn validate(features: &[Feature]) -> Result<(), Error> {
     Ok(())
 }
 
-/// Count disagreeing binary patch comparisons.
-fn hamming(left: &Feature, right: &Feature) -> u32 {
+/// Count disagreements until the result can no longer improve the two nearest patches.
+fn hamming_bounded(left: &Feature, right: &Feature, stop_at: u32) -> u32 {
+    let distance =
+        (left.bits[0] ^ right.bits[0]).count_ones() + (left.bits[1] ^ right.bits[1]).count_ones();
+    if distance >= stop_at {
+        return distance;
+    }
+    distance
+        + (left.bits[2] ^ right.bits[2]).count_ones()
+        + (left.bits[3] ^ right.bits[3]).count_ones()
+}
+
+/// Count disagreements using the hardware population-count instruction.
+///
+/// # Safety
+///
+/// Call only after checking that this CPU supports `popcnt`.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "popcnt")]
+unsafe fn hamming_popcnt(left: &Feature, right: &Feature) -> u32 {
     left.bits
         .iter()
         .zip(right.bits)
@@ -171,33 +216,59 @@ fn hamming(left: &Feature, right: &Feature) -> u32 {
         .sum()
 }
 
+/// Find the two nearest reference patches without changing tie order.
+fn nearest<const POPCNT: bool>(query: &Feature, reference: &[Feature]) -> (u32, u32, usize) {
+    let (mut best, mut second, mut best_index) = (257, 257, 0);
+    for (reference_index, reference_feature) in reference.iter().enumerate() {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let distance = if POPCNT {
+            // SAFETY: the only `nearest::<true>` caller checks this CPU feature.
+            // Four hardware POPCNTs are faster than data-dependent early-exit
+            // branches; the bounded fallback is for CPUs without that instruction.
+            unsafe { hamming_popcnt(query, reference_feature) }
+        } else {
+            hamming_bounded(query, reference_feature, second)
+        };
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        let distance = hamming_bounded(query, reference_feature, second);
+        if distance < best {
+            second = best;
+            best = distance;
+            best_index = reference_index;
+        } else if distance < second {
+            second = distance;
+        }
+    }
+    (best, second, best_index)
+}
+
 /// Apply the nearest-neighbor ratio test and keep each reference keypoint unique.
 fn correspondences(query: &[Feature], reference: &[Feature]) -> Vec<Pair> {
     let mut matches = Vec::new();
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    let popcnt = std::is_x86_feature_detected!("popcnt");
     for (query_index, query_feature) in query.iter().enumerate() {
-        let (mut best, mut second, mut best_index) = (257, 257, 0);
-        for (reference_index, reference_feature) in reference.iter().enumerate() {
-            let distance = hamming(query_feature, reference_feature);
-            if distance < best {
-                second = best;
-                best = distance;
-                best_index = reference_index;
-            } else if distance < second {
-                second = distance;
-            }
-        }
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let (best, second, best_index) = if popcnt {
+            nearest::<true>(query_feature, reference)
+        } else {
+            nearest::<false>(query_feature, reference)
+        };
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        let (best, second, best_index) = nearest::<false>(query_feature, reference);
         if best < 80 && best * 4 < second * 3 {
             matches.push((best, query_index, best_index));
         }
     }
     matches.sort_unstable();
-    let mut used = HashSet::new();
+    let mut used = vec![false; reference.len()];
     matches
         .into_iter()
         .filter_map(|(_, query_index, reference_index)| {
-            if !used.insert(reference_index) {
+            if used[reference_index] {
                 return None;
             }
+            used[reference_index] = true;
             let left = &query[query_index];
             let right = &reference[reference_index];
             Some(Pair {
@@ -250,7 +321,7 @@ fn solve(mut matrix: [[f64; 9]; 8]) -> Option<[f64; 9]> {
 }
 
 /// Fit a projective transform in normalized coordinates by linear least squares.
-fn estimate(pairs: &[Pair]) -> Option<[f64; 9]> {
+fn estimate<'a>(pairs: impl IntoIterator<Item = &'a Pair>) -> Option<[f64; 9]> {
     let mut normal = [[0.0; 9]; 8];
     for pair in pairs {
         let [x, y] = pair.query;
@@ -301,18 +372,23 @@ fn plausible(homography: &[f64; 9]) -> bool {
         })
 }
 
-/// Select correspondences with at most three pixels of forward reprojection error.
-fn inliers(homography: &[f64; 9], pairs: &[Pair]) -> Vec<usize> {
-    pairs
-        .iter()
-        .enumerate()
-        .filter_map(|(index, pair)| {
-            let target = project(homography, pair.query);
-            let error = ((target[0] - pair.reference[0]) * f64::from(WIDTH)).powi(2)
-                + ((target[1] - pair.reference[1]) * f64::from(HEIGHT)).powi(2);
-            (error <= 9.0).then_some(index)
-        })
-        .collect()
+/// Whether one correspondence has at most three pixels of forward reprojection error.
+fn is_inlier(homography: &[f64; 9], pair: &Pair) -> bool {
+    let target = project(homography, pair.query);
+    let error = ((target[0] - pair.reference[0]) * f64::from(WIDTH)).powi(2)
+        + ((target[1] - pair.reference[1]) * f64::from(HEIGHT)).powi(2);
+    error <= 9.0
+}
+
+/// Reuse one allocation while selecting inlier correspondence positions.
+fn collect_inliers(homography: &[f64; 9], pairs: &[Pair], result: &mut Vec<usize>) {
+    result.clear();
+    result.extend(
+        pairs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, pair)| is_inlier(homography, pair).then_some(index)),
+    );
 }
 
 /// Compute convex-hull area for a bounded set of normalized image positions.
@@ -361,21 +437,24 @@ pub(super) fn match_evidence(query: &[Feature], reference: &[Feature]) -> Option
     if pairs.len() < MIN_MATCHES {
         return None;
     }
-    let mut best = Vec::new();
+    let mut best = Vec::with_capacity(pairs.len());
+    let mut hits = Vec::with_capacity(pairs.len());
     let mut state = 1701;
     for _ in 0..ITERATIONS {
-        let mut indices = Vec::with_capacity(4);
-        while indices.len() < 4 {
+        let mut indices = [0; 4];
+        let mut selected = 0;
+        while selected < indices.len() {
             let index = (random(&mut state) % pairs.len() as u64) as usize;
-            if !indices.contains(&index) {
-                indices.push(index);
+            if !indices[..selected].contains(&index) {
+                indices[selected] = index;
+                selected += 1;
             }
         }
-        let sample: Vec<_> = indices.iter().map(|index| pairs[*index]).collect();
+        let sample = indices.map(|index| pairs[index]);
         if let Some(homography) = estimate(&sample).filter(plausible) {
-            let hits = inliers(&homography, &pairs);
+            collect_inliers(&homography, &pairs, &mut hits);
             if hits.len() > best.len() {
-                best = hits;
+                std::mem::swap(&mut best, &mut hits);
                 if best.len() as f64 / pairs.len() as f64 > 0.95 {
                     break;
                 }
@@ -385,9 +464,9 @@ pub(super) fn match_evidence(query: &[Feature], reference: &[Feature]) -> Option
     if best.len() < MIN_MATCHES {
         return None;
     }
-    let sample: Vec<_> = best.iter().map(|index| pairs[*index]).collect();
-    let homography = estimate(&sample).filter(plausible)?;
-    best = inliers(&homography, &pairs);
+    let homography = estimate(best.iter().map(|index| &pairs[*index])).filter(plausible)?;
+    collect_inliers(&homography, &pairs, &mut hits);
+    std::mem::swap(&mut best, &mut hits);
     if best.len() < MIN_MATCHES {
         return None;
     }
@@ -430,6 +509,157 @@ pub(super) fn match_evidence(query: &[Feature], reference: &[Feature]) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{GrayAlphaImage, GrayImage, ImageBuffer, Luma, LumaA, Rgb, Rgba, RgbaImage};
+
+    /// Compare persisted feature fields without requiring them to be public API values.
+    fn assert_same_features(left: &[Feature], right: &[Feature]) {
+        assert!(!left.is_empty());
+        assert_eq!(left.len(), right.len());
+        for (left, right) in left.iter().zip(right) {
+            assert_eq!((left.x, left.y, left.bits), (right.x, right.y, right.bits));
+        }
+    }
+
+    /// Run the format-preserving query route used by candidate geometry.
+    fn extract_query_path(image: &DynamicImage) -> Vec<Feature> {
+        let rgb = image.to_rgb8();
+        let normalized = image::imageops::resize(&rgb, WIDTH, HEIGHT, FilterType::Triangle);
+        extract_query(image, &normalized)
+    }
+
+    /// Sharing normalization preserves every local-feature byte for ordinary RGB input.
+    #[test]
+    fn normalized_rgb_extraction_matches_compatibility_rgb_path() {
+        let image = DynamicImage::ImageRgb8(RgbImage::from_fn(413, 577, |x, y| {
+            let value = x.wrapping_mul(47) ^ y.wrapping_mul(83) ^ (x * y).wrapping_mul(17);
+            Rgb([
+                (value & 255) as u8,
+                ((value >> 3) & 255) as u8,
+                ((value >> 7) & 255) as u8,
+            ])
+        }));
+        let rgb = image.to_rgb8();
+        let normalized = image::imageops::resize(&rgb, WIDTH, HEIGHT, FilterType::Triangle);
+        assert_same_features(&extract(&image), &extract_normalized_rgb(&normalized));
+    }
+
+    /// Non-RGB query formats retain the compatibility conversion and feature bytes.
+    #[test]
+    fn query_extraction_preserves_non_rgb_dynamic_paths() {
+        let luma = DynamicImage::ImageLuma8(GrayImage::from_fn(413, 577, |x, y| {
+            Luma([((x * 47) ^ (y * 83) ^ (x * y * 17)) as u8])
+        }));
+        let luma_alpha = DynamicImage::ImageLumaA8(GrayAlphaImage::from_fn(413, 577, |x, y| {
+            LumaA([
+                ((x * 47) ^ (y * 83) ^ (x * y * 17)) as u8,
+                ((x * 13 + y * 29) & 255) as u8,
+            ])
+        }));
+        let rgba = DynamicImage::ImageRgba8(RgbaImage::from_fn(413, 577, |x, y| {
+            let value = x.wrapping_mul(47) ^ y.wrapping_mul(83) ^ (x * y).wrapping_mul(17);
+            Rgba([
+                (value & 255) as u8,
+                ((value >> 3) & 255) as u8,
+                ((value >> 7) & 255) as u8,
+                ((x * 13 + y * 29) & 255) as u8,
+            ])
+        }));
+        let luma16 = DynamicImage::ImageLuma16(ImageBuffer::<Luma<u16>, Vec<u16>>::from_fn(
+            413,
+            577,
+            |x, y| Luma([((x * 1217) ^ (y * 2137) ^ (x * y * 173)) as u16]),
+        ));
+        for image in [luma, luma_alpha, rgba, luma16] {
+            assert_same_features(&extract(&image), &extract_query_path(&image));
+        }
+    }
+
+    /// Full-distance baseline for proving that bounded sums preserve strict tie handling.
+    fn nearest_exhaustive(query: &Feature, reference: &[Feature]) -> (u32, u32, usize) {
+        let (mut best, mut second, mut best_index) = (257, 257, 0);
+        for (reference_index, reference_feature) in reference.iter().enumerate() {
+            let distance = query
+                .bits
+                .iter()
+                .zip(reference_feature.bits)
+                .map(|(left, right)| (left ^ right).count_ones())
+                .sum();
+            if distance < best {
+                second = best;
+                best = distance;
+                best_index = reference_index;
+            } else if distance < second {
+                second = distance;
+            }
+        }
+        (best, second, best_index)
+    }
+
+    /// Bounded portable distances retain exact nearest neighbors, runners-up and ties.
+    #[test]
+    fn bounded_hamming_preserves_exhaustive_nearest_neighbors() {
+        let mut state = 91517;
+        let mut references = Vec::new();
+        for _ in 0..256 {
+            references.push(Feature {
+                x: 0,
+                y: 0,
+                bits: std::array::from_fn(|_| random(&mut state)),
+            });
+        }
+        references.push(references[3].clone());
+        references.push(Feature {
+            x: 0,
+            y: 0,
+            bits: [0; 4],
+        });
+        references.push(Feature {
+            x: 0,
+            y: 0,
+            bits: [u64::MAX; 4],
+        });
+        for query in &references {
+            assert_eq!(
+                nearest::<false>(query, &references),
+                nearest_exhaustive(query, &references)
+            );
+        }
+    }
+
+    /// Hardware and portable patch distances preserve nearest-neighbor ties.
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[test]
+    fn hardware_population_count_preserves_nearest_neighbors() {
+        if !std::is_x86_feature_detected!("popcnt") {
+            return;
+        }
+        let mut state = 91517;
+        let mut references = Vec::new();
+        for _ in 0..256 {
+            references.push(Feature {
+                x: 0,
+                y: 0,
+                bits: std::array::from_fn(|_| random(&mut state)),
+            });
+        }
+        references.push(references[3].clone());
+        references.push(Feature {
+            x: 0,
+            y: 0,
+            bits: [0; 4],
+        });
+        references.push(Feature {
+            x: 0,
+            y: 0,
+            bits: [u64::MAX; 4],
+        });
+        for query in &references {
+            assert_eq!(
+                nearest::<true>(query, &references),
+                nearest_exhaustive(query, &references)
+            );
+        }
+    }
 
     /// Produce distributed, distinctive descriptors and their known projective locations.
     fn projected_features() -> (Vec<Feature>, Vec<Feature>) {

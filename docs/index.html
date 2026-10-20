@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Inspect Magic: The Gathering card extraction, visual matches, and OCR text searches in your browser.">
-    <meta name="theme-color" content="#ffffff">
+    <meta name="description" content="Watch a Magic card go from picture to identification, with real processing times at every step.">
+    <meta name="theme-color" content="#f6f7f8">
     <title>Pipeline explorer · whosthatpokemon</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='10' y='6' width='28' height='36' rx='5' fill='%23292f2b'/%3E%3Cpath d='M16 16h16M16 24h10M16 32h16' stroke='%23d9edb0' stroke-width='3'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="styles.css">
@@ -12,151 +12,139 @@
   </head>
   <body>
     <header class="site-header wrap">
-      <a class="brand" href="#">whosthatpokemon</a>
-      <nav aria-label="Main navigation">
-        <a href="#pipeline">Pipeline</a>
-        <a href="#evidence">Evidence</a>
-        <a href="#method">Notes</a>
-        <a href="https://github.com/cmeister2/whosthatpokemon">Source</a>
-      </nav>
+      <a class="brand" href="#" aria-label="whosthatpokemon home"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="3.5" y="5.5" width="16" height="20" rx="2"/><rect x="8.5" y="2.5" width="16" height="20" rx="2"/><path d="M13 9h7M13 13h5M13 17h7"/></svg>whosthatpokemon</a>
+      <a class="source-link" href="https://github.com/cmeister2/whosthatpokemon">View source <span aria-hidden="true">↗</span></a>
     </header>
 
-    <main>
-      <section class="intro wrap">
-        <h1>Pipeline explorer</h1>
-        <p>Inspect a Magic: The Gathering picture, its extracted cards, and their closest matches. Processing runs in your browser.</p>
+    <main class="wrap">
+      <section class="intro" aria-labelledby="page-heading">
+        <div class="intro-copy">
+          <p class="eyebrow">Pipeline explorer</p>
+          <h1 id="page-heading">From picture to card.</h1>
+          <p>Follow what happens when the library identifies a card: find it in a picture, read its name, narrow the search, and confirm the image. This public example runs automatically.</p>
+        </div>
+        <div class="total-summary" aria-label="Measured processing time">
+          <span class="summary-label">End to end</span>
+          <strong id="timing-total">—</strong>
+          <span class="summary-caption">measured in this browser</span>
+        </div>
       </section>
 
-      <section id="pipeline" class="pipeline-section wrap" aria-labelledby="pipeline-heading">
-        <h2 id="pipeline-heading" class="visually-hidden">Pipeline</h2>
-        <div class="workbench-toolbar">
-          <div class="sample-control">
-            <label for="sample-select">Sample</label>
-            <select id="sample-select" disabled><option>Loading samples…</option></select>
-          </div>
-          <div class="input-actions">
-            <label class="check-label"><input id="cropped-input" type="checkbox"> Already cropped</label>
-            <button id="camera-button" class="button button-outline">Camera</button>
-            <label class="button button-dark" for="file-input">Upload picture</label>
-            <input id="file-input" type="file" accept="image/*" class="visually-hidden">
-          </div>
+      <section id="pipeline" class="pipeline-section" aria-labelledby="pipeline-heading">
+        <h2 id="pipeline-heading" class="visually-hidden">The identification process</h2>
+        <div class="run-status">
+          <div class="status-copy"><span class="status-indicator" aria-hidden="true"></span><p id="status-message" role="status" aria-live="polite">Loading the example…</p></div>
+          <button id="rerun-button" class="button button-outline" disabled><span aria-hidden="true">↻</span> Run again</button>
         </div>
-        <div id="sample-description" class="sample-description">Loading a public test scene…</div>
 
         <div class="pipeline-grid">
-          <article class="stage capture-stage">
-            <div class="stage-heading"><div><h3>Source image</h3><p>Select an outline to inspect a card.</p></div></div>
-            <div class="capture-frame">
-              <img id="source-image" alt="Selected source picture" hidden>
-              <svg id="source-overlay" role="group" aria-label="Detected card outlines"></svg>
-              <div id="source-placeholder" class="image-placeholder">Loading image…</div>
-              <span id="source-dimensions" class="image-label"></span>
+          <article id="stage-image" class="stage image-stage" data-state="waiting" aria-labelledby="image-heading">
+            <div class="stage-meta"><span class="step-number">01</span><span id="timing-image" class="stage-time">—</span></div>
+            <h3 id="image-heading">Picture</h3>
+            <p class="stage-description">A camera frame or picture supplies the starting image.</p>
+            <div class="stage-body">
+              <div class="capture-frame">
+                <img id="source-image" alt="Public example scene containing Magic cards" hidden>
+                <svg id="source-overlay" role="group" aria-label="Detected card outlines"></svg>
+                <div id="source-placeholder" class="image-placeholder">Loading the example picture…</div>
+                <span id="source-dimensions" class="image-label"></span>
+              </div>
+              <p id="detection-count" class="stage-caption">Waiting for extraction</p>
+              <div id="card-tabs" class="card-tabs" aria-label="Choose a card to follow"></div>
             </div>
-            <div class="stage-foot"><span id="detection-count">Waiting for extraction</span><button id="rerun-button" class="text-button" disabled>Run again</button></div>
-            <div id="card-tabs" class="card-tabs" aria-label="Choose an extracted card"></div>
+            <div class="stage-footer"><span class="stage-state">Input image</span><span class="stage-arrow" aria-hidden="true">→</span></div>
           </article>
 
-          <article class="stage extraction-stage">
-            <div class="stage-heading"><div><h3>Extracted card</h3><p>Perspective corrected by magicextract.</p></div></div>
-            <div class="crop-frame">
-              <canvas id="crop-canvas" width="500" height="700" aria-label="Rectified card with recognition regions"></canvas>
-              <svg id="region-overlay" viewBox="0 0 500 700" role="group" aria-label="Card regions used for evidence"></svg>
-              <img id="raw-crop-image" alt="Raw perspective-corrected magicextract output, before orientation correction" hidden>
-              <button id="raw-crop-button" class="crop-view-toggle" aria-pressed="false" hidden>Show raw crop</button>
-              <div id="crop-placeholder" class="image-placeholder">Extracted card</div>
+          <article id="stage-extraction" class="stage extraction-stage" data-state="waiting" aria-labelledby="extraction-heading">
+            <div class="stage-meta"><span class="step-number">02</span><span id="timing-extraction" class="stage-time">—</span></div>
+            <h3 id="extraction-heading">Extract &amp; straighten</h3>
+            <p class="stage-description">Find the corners, crop the card, and straighten its perspective.</p>
+            <div class="stage-body">
+              <div class="crop-frame">
+                <canvas id="crop-canvas" width="500" height="700" aria-label="Perspective-corrected card, with its title region highlighted"></canvas>
+                <div id="crop-placeholder" class="image-placeholder">Waiting for the card crop…</div>
+              </div>
+              <p id="crop-information" class="stage-caption">The highlighted band supplies the title.</p>
             </div>
-            <div class="stage-foot"><span id="crop-information">Perspective corrected</span><button id="rotate-button" class="text-button" disabled>Rotate</button></div>
-            <div class="region-tabs" aria-label="Inspect a card region">
-              <button class="region-button active" data-region="artwork">Artwork</button>
-              <button class="region-button" data-region="title">Title</button>
-              <button class="region-button" data-region="rules">Rules</button>
-              <button class="region-button" data-region="footer">Bottom bar</button>
-            </div>
+            <div class="stage-footer"><span class="stage-state">Straightened card</span><span class="stage-arrow" aria-hidden="true">→</span></div>
           </article>
 
-          <article class="stage recognition-stage">
-            <div class="stage-heading"><div><h3>Matches</h3><p>Visual similarity to the reference catalog.</p></div></div>
-            <div id="recognition-result" class="recognition-result"><div class="result-placeholder">Select an extracted card to see its matches.</div></div>
-            <div class="rank-heading"><span>Reference</span><span>Similarity</span></div>
-            <ol id="candidate-list" class="candidate-list"></ol>
-            <p class="score-caption">Similarity and confidence scores are uncalibrated heuristics, not probabilities.</p>
+          <article id="stage-ocr" class="stage ocr-stage" data-state="waiting" aria-labelledby="ocr-heading">
+            <div class="stage-meta"><span class="step-number">03</span><span id="timing-ocr" class="stage-time">—</span></div>
+            <h3 id="ocr-heading">Read the title</h3>
+            <p class="stage-description">Read the name from the small title band using OCR.</p>
+            <div class="stage-body">
+              <div class="title-band">
+                <canvas id="title-canvas" width="500" height="70" aria-label="Title band supplied to OCR"></canvas>
+                <div id="title-placeholder" class="image-placeholder">Title image</div>
+              </div>
+              <div class="reading-arrow" aria-hidden="true">↓</div>
+              <div class="ocr-output"><span class="small-label">Literal OCR output</span><p id="ocr-text" class="ocr-text">Waiting for text…</p><span id="ocr-confidence" class="ocr-confidence"></span></div>
+              <p id="orientation-note" class="stage-caption"></p>
+            </div>
+            <div class="stage-footer"><span class="stage-state">Text evidence</span><span class="stage-arrow" aria-hidden="true">→</span></div>
+          </article>
+
+          <article id="stage-lookup" class="stage lookup-stage" data-state="waiting" aria-labelledby="lookup-heading">
+            <div class="stage-meta"><span class="step-number">04</span><span id="timing-lookup" class="stage-time">—</span></div>
+            <h3 id="lookup-heading">Look up candidates</h3>
+            <p class="stage-description">Search indexed names to propose a few likely card identities.</p>
+            <div class="stage-body">
+              <div class="shortlist-summary"><span id="shortlist-count" class="shortlist-count">—</span><span>in the title shortlist</span></div>
+              <ol id="shortlist-list" class="shortlist-list"><li class="empty-state">Waiting for the title lookup…</li></ol>
+              <p class="stage-caption">Small reading errors are allowed. Reprints share one identity; they do not add votes.</p>
+            </div>
+            <div class="stage-footer"><span class="stage-state">Bounded shortlist</span><span class="stage-arrow" aria-hidden="true">→</span></div>
+          </article>
+
+          <article id="stage-verification" class="stage verification-stage" data-state="waiting" aria-labelledby="verification-heading">
+            <div class="stage-meta"><span class="step-number">05</span><span id="timing-verification" class="stage-time">—</span></div>
+            <h3 id="verification-heading">Check the picture</h3>
+            <p class="stage-description">Compare appearance, then check that visual features line up.</p>
+            <div class="stage-body">
+              <ol id="candidate-list" class="candidate-list"><li class="empty-state">Waiting for visual verification…</li></ol>
+              <div id="visual-measurements" class="measurements"></div>
+              <p id="visual-method-note" class="stage-caption">The picture must support the proposed card, even when the title looks right.</p>
+            </div>
+            <div class="stage-footer"><span class="stage-state">Visual evidence</span><span class="stage-arrow" aria-hidden="true">→</span></div>
+          </article>
+
+          <article id="stage-result" class="stage result-stage" data-state="waiting" aria-labelledby="result-heading">
+            <div class="stage-meta"><span class="step-number">06</span><span id="timing-decision" class="stage-time">—</span></div>
+            <h3 id="result-heading">Identify the card</h3>
+            <p class="stage-description">Combine text and image evidence. Accept a supported match or abstain.</p>
+            <div class="stage-body"><div id="recognition-result" class="recognition-result"><div class="result-placeholder">Waiting for both text and visual evidence…</div></div><p class="stage-caption">A card’s identity can be known while its exact printing stays ambiguous.</p></div>
+            <div class="stage-footer"><span class="stage-state">Final decision</span><span class="stage-complete" aria-hidden="true">✓</span></div>
           </article>
         </div>
 
-        <div class="workbench-status"><p id="status-message" role="status" aria-live="polite">Loading sample…</p><span id="catalog-size"></span></div>
-        <p class="privacy-note">Pictures stay on your device. Extraction, matching, and optional English OCR run locally. The demo resizes pictures and processes up to 16 cards per scene.</p>
+        <div class="measurement-notes"><p id="timing-summary">Stage timings will appear as the example runs.</p><p>One-time setup <span id="timing-setup" class="inline-time">—</span><span class="note-separator" aria-hidden="true">·</span><span id="catalog-size">Loading reference catalogue…</span></p></div>
+        <details class="attempt-details"><summary>Orientation attempts</summary><ol id="attempt-list" class="attempt-list"><li class="empty-state">No attempts yet.</li></ol></details>
       </section>
 
-      <section id="evidence" class="evidence-section wrap" aria-labelledby="evidence-heading">
-        <div class="section-heading"><h2 id="evidence-heading">Evidence</h2><p>Inspect the selected candidate or search the card’s printed text.</p></div>
-        <div class="evidence-grid">
-          <article class="evidence-panel visual-panel">
-            <div class="panel-title"><div><h3>Visual match</h3><p>Measurements for the selected candidate.</p></div></div>
-            <div class="region-preview-row">
-              <canvas id="region-preview" width="360" height="180" aria-label="Enlarged selected card region"></canvas>
-              <div><span id="region-name" class="region-name">Artwork</span><p id="region-description">Compares the artwork’s structure and colour.</p></div>
-            </div>
-            <div id="visual-measurements" class="measurements"><p class="empty-state">Select a card to inspect its measurements.</p></div>
-            <p id="visual-method-note" class="panel-note">The matcher compares the full card and artwork across four rotations and several reference crops.</p>
-          </article>
-
-          <article class="evidence-panel text-panel">
-            <div class="panel-title"><div><h3>Text search</h3><p>Read the card or enter text to search the catalog.</p></div></div>
-            <div class="ocr-toolbar">
-              <label for="layout-select">Frame</label>
-              <select id="layout-select"><option value="modern">Modern / M15 onward</option><option value="classic">Older / pre-M15</option></select>
-              <button id="ocr-button" class="button button-dark" disabled>Read card text</button>
-            </div>
-            <p class="ocr-note">OCR downloads an English model on first use. Regions assume a conventional portrait frame. Rotate the card or correct the extracted text below if needed.</p>
-            <div class="ocr-fields">
-              <label class="ocr-field title-field"><span>Title <small id="title-confidence"></small></span><input id="title-text" type="text" placeholder="Card name" autocomplete="off"></label>
-              <label class="ocr-field footer-field"><span>Bottom bar <small id="footer-confidence"></small></span><input id="footer-text" type="text" placeholder="Collector number, set code, language" autocomplete="off"></label>
-              <label class="ocr-field rules-field"><span>Rules text <small id="rules-confidence"></small></span><textarea id="rules-text" rows="3" placeholder="Rules text, including imperfect OCR"></textarea></label>
-            </div>
-            <div class="text-search-actions"><button id="text-search-button" class="button button-outline" disabled>Search text</button><span id="ocr-status" role="status" aria-live="polite">No OCR run yet.</span></div>
-            <div id="text-results" class="text-results"></div>
-          </article>
+      <details class="example-controls">
+        <summary><span>Try another example or your own picture</span><span class="details-hint">Optional</span></summary>
+        <div class="controls-body">
+          <div class="sample-control"><label for="sample-select">Public example</label><select id="sample-select" disabled><option>Loading examples…</option></select></div>
+          <p id="sample-description" class="sample-description">Loading a rendered public test scene…</p>
+          <div class="input-actions">
+            <label class="button button-dark" for="file-input">Upload picture</label><input id="file-input" type="file" accept="image/*" class="visually-hidden">
+            <button id="camera-button" class="button button-outline">Use camera</button>
+            <label class="check-label"><input id="cropped-input" type="checkbox"> Already cropped to one card</label>
+            <label class="layout-control" for="layout-select">Frame <select id="layout-select"><option value="modern">Modern</option><option value="classic">Classic</option></select></label>
+          </div>
+          <p class="privacy-note">Your pictures stay on this device. Processing runs locally in your browser.</p>
         </div>
-      </section>
+      </details>
 
-      <section id="method" class="method-section wrap" aria-labelledby="method-heading">
-        <h2 id="method-heading">Notes</h2>
-        <p>This demo searches 28 public printings. magicextract detects card-shaped regions; recognition compares those crops with the catalog. A card missing from the catalog can still resemble a reference.</p>
-        <p><strong>Identity</strong> means the card itself; <strong>printing</strong> means a particular release. Printings can share a title and artwork. <strong>Matched</strong> clears the similarity and margin thresholds, <strong>ambiguous</strong> means competing candidates are too close, and <strong>unknown</strong> means the best candidate falls below the threshold.</p>
-        <details class="method-notes">
-          <summary>Matching notes</summary>
-          <dl class="method-definitions">
-            <dt>Artwork and full card</dt>
-            <dd>Luminance structure, artwork colour, and a perceptual hash contribute to visual similarity. Local features and geometric verification provide a fallback for difficult perspectives. Shared artwork can leave the printing ambiguous.</dd>
-            <dt>Title</dt>
-            <dd>OCR and normalised fuzzy matching tolerate small reading errors. A name usually identifies the card, but does not distinguish its reprints.</dd>
-            <dt>Rules text</dt>
-            <dd>Fuzzy matching gives distinctive words more weight than common phrases. Printed wording can differ from current Oracle text. Reminder text, language, and short rules boxes can limit the result.</dd>
-            <dt>Bottom bar</dt>
-            <dd>A readable set code and collector number together can identify a printing. Modern frames place these fields consistently; older layouts need different regions. Some early cards have no printed collector number.</dd>
-          </dl>
-          <p>Visual and text rankings are separate. Text search does not change the visual match, and neither ranking is calibrated as a probability.</p>
-          <p>OCR uses approximate regions and an English model. Unusual frames need custom regions. Mana symbols, the type line, artist credits, and rarity are not independent matching inputs in this demo.</p>
-        </details>
-      </section>
+      <aside class="scope-note"><span class="small-label">About this demonstration</span><p>This small example uses 28 public reference printings. The browser illustration reads text with Tesseract; the native library uses ocracle, so their timings differ. Times shown here are measured on your device. Cards outside the example catalogue may remain unidentified.</p></aside>
     </main>
 
     <footer class="site-footer wrap">
-      <div class="footer-links">
-        <a href="https://github.com/cmeister2/whosthatpokemon">Source</a>
-        <a href="https://github.com/cmeister2/magicextract">magicextract</a>
-        <a href="https://scryfall.com/docs/api">Scryfall API</a>
-        <a href="https://magic.wizards.com/en/news/making-magic/directors-chair-2013-2014-01-06">Frame design</a>
-        <a href="ocr/NOTICE.md">OCR licenses</a>
-      </div>
-      <p class="art-attribution">Card images and Magic: The Gathering content © Wizards of the Coast. Reference images and metadata from Scryfall. Public rendered test scenes are illustrative fixtures, not photographs of a physical collection. This project is not affiliated with Wizards of the Coast.</p>
+      <div class="footer-links"><a href="https://github.com/cmeister2/whosthatpokemon">Source</a><a href="https://github.com/cmeister2/magicextract">magicextract</a><a href="https://github.com/cmeister2/ocracle">ocracle</a><a href="https://scryfall.com/docs/api">Scryfall</a><a href="ocr/NOTICE.md">OCR licenses</a></div>
+      <p class="art-attribution">Magic: The Gathering content and card images © Wizards of the Coast. Reference images and metadata from Scryfall. Examples are public rendered scenes, not photographs of a physical collection. This project is not affiliated with Wizards of the Coast.</p>
     </footer>
 
-    <dialog id="camera-dialog" aria-labelledby="camera-heading">
-      <div class="camera-dialog-heading"><h2 id="camera-heading">Capture a card</h2><button id="close-camera" class="text-button" aria-label="Close camera">Close</button></div>
-      <video id="camera-video" autoplay muted playsinline></video>
-      <p>Keep the whole card in frame, with even light and a little space around it.</p>
-      <button id="take-picture" class="button button-dark">Take picture</button>
-    </dialog>
+    <dialog id="camera-dialog" aria-labelledby="camera-heading"><div class="camera-dialog-heading"><h2 id="camera-heading">Capture a card</h2><button id="close-camera" class="text-button" aria-label="Close camera">Close</button></div><video id="camera-video" autoplay muted playsinline></video><p>Keep the whole card in frame, with even light and a little space around it.</p><button id="take-picture" class="button button-dark">Take picture</button></dialog>
   </body>
 </html>
