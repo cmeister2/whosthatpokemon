@@ -1,0 +1,10 @@
+The camera demo uses the unmodified PP-OCRv6 small recognition model published by
+PaddlePaddle, under the Apache License 2.0 (camera-model-license.txt).
+
+Upstream: https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
+Revision: b8f84f0b80c529de40b4fbb3544b84fa7233a513
+Model SHA-256: 5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634
+
+OCRacle supplies the model configuration and Rust inference. These weights have
+not been trained or modified by this project. The Rust library remains MIT
+licensed. Magic card imagery and metadata retain their original rights.

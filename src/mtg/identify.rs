@@ -8,11 +8,11 @@
 //! calibrated probabilities. Complete visual decisions remain distinct from a
 //! geometrically verified shortlist whose omitted geometry is still unknown.
 
+#[cfg(any(not(target_arch = "wasm32"), feature = "ocr"))]
+use crate::clock::Instant;
 #[cfg(not(target_arch = "wasm32"))]
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
 
 use super::evidence::{
     FooterProposer, TextIndex, TextMatch, TextObservations, TitleIdentityProposal, TitleProposer,
@@ -530,9 +530,51 @@ pub fn identify_fields_with<T: TitleProposer + ?Sized, F: FooterProposer + ?Size
     max_title_identities: usize,
     candidate_options: &CandidateOptions,
 ) -> Result<FieldIdentification, Error> {
+    candidate_options.validate()?;
+    identify_fields_using(
+        title_index,
+        footer_index,
+        observations,
+        match_options,
+        max_title_identities,
+        |cards, exact| {
+            if exact {
+                visual_index.recognize_faces_with(image, match_options, candidate_options, cards)
+            } else {
+                visual_index.recognize_candidates_with(
+                    image,
+                    match_options,
+                    candidate_options,
+                    cards,
+                )
+            }
+        },
+    )
+}
+
+/// Apply the same indexed retrieval, exact-footer-first strategy and fusion to any storage.
+///
+/// The callback must use the existing bounded recognizer, preserving supplied
+/// exact faces when `exact` is true and expanding indexed groups otherwise.
+///
+/// # Errors
+///
+/// Returns errors for invalid options/budgets or failed selected-face verification.
+#[cfg(any(not(target_arch = "wasm32"), feature = "ocr"))]
+pub(crate) fn identify_fields_using<T, F>(
+    title_index: &T,
+    footer_index: &F,
+    observations: &TextObservations,
+    match_options: &MatchOptions,
+    max_title_identities: usize,
+    mut verify: impl FnMut(&[CardMetadata], bool) -> Result<CandidateRecognition, Error>,
+) -> Result<FieldIdentification, Error>
+where
+    T: TitleProposer + ?Sized,
+    F: FooterProposer + ?Sized,
+{
     let total_started = Instant::now();
     match_options.validate()?;
-    candidate_options.validate()?;
     if max_title_identities == 0 {
         return Err(Error::InvalidOptions(
             "title identity budget must be positive".into(),
@@ -557,12 +599,7 @@ pub fn identify_fields_with<T: TitleProposer + ?Sized, F: FooterProposer + ?Size
     let mut footer_verification = None;
     if !footer_faces.is_empty() {
         let stage_started = Instant::now();
-        let visual = visual_index.recognize_faces_with(
-            image,
-            match_options,
-            candidate_options,
-            &footer_faces,
-        )?;
+        let visual = verify(&footer_faces, true)?;
         visual_matching += stage_started.elapsed().as_secs_f64() * 1_000.0;
         let stage_started = Instant::now();
         let mut result = combine_candidates(observations, text.clone(), visual, match_options)?;
@@ -595,12 +632,7 @@ pub fn identify_fields_with<T: TitleProposer + ?Sized, F: FooterProposer + ?Size
         footer_verification = Some(result.visual);
     }
     let stage_started = Instant::now();
-    let visual = visual_index.recognize_candidates_with(
-        image,
-        match_options,
-        candidate_options,
-        &text.hints,
-    )?;
+    let visual = verify(&text.hints, false)?;
     visual_matching += stage_started.elapsed().as_secs_f64() * 1_000.0;
     let stage_started = Instant::now();
     let mut result = combine_candidates(observations, text, visual, match_options)?;

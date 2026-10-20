@@ -462,7 +462,7 @@ pub(super) fn recognize_candidates_with(
 /// # Errors
 ///
 /// Returns an error for invalid options/input or unavailable selected records.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "ocr"))]
 pub(super) fn recognize_faces_with(
     index: &impl CandidateSource,
     image: &DynamicImage,
@@ -545,12 +545,9 @@ fn recognize_selected_with(
         let offsets: Vec<_> = locations.iter().map(|location| location.offset).collect();
         let mut references = index.read_candidate_globals(shard, &offsets)?;
         for location in locations {
-            let reference = references
-                .get_mut(location.offset)
-                .and_then(Option::take)
-                .ok_or_else(|| {
-                    Error::InvalidIndex("selected global candidate missing from shard".into())
-                })?;
+            let reference = references.remove(&location.offset).ok_or_else(|| {
+                Error::InvalidIndex("selected global candidate missing from shard".into())
+            })?;
             let candidate = score_candidate_reference(&reference, &queries);
             scored.push(ScoredCandidate {
                 location,
@@ -589,10 +586,8 @@ fn recognize_selected_with(
         let mut features = index.read_candidate_local_features(shard, &offsets)?;
         for position in positions {
             let location = scored[position].location;
-            scored[position].reference.features = features
-                .get_mut(location.offset)
-                .and_then(Option::take)
-                .ok_or_else(|| {
+            scored[position].reference.features =
+                features.remove(&location.offset).ok_or_else(|| {
                     Error::InvalidIndex("selected local candidate missing from shard".into())
                 })?;
         }

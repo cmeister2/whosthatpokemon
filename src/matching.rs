@@ -29,6 +29,12 @@ mod candidates;
 #[cfg(feature = "web")]
 pub(crate) use candidates::CatalogCandidateLookup;
 
+/// Sparse browser reference acquisition using complete startup metadata postings.
+#[cfg(all(feature = "web", feature = "ocr"))]
+mod remote;
+#[cfg(all(feature = "web", feature = "ocr"))]
+pub(crate) use remote::{RemoteCatalog, RemoteReference};
+
 /// Lossless native persistence with separate global descriptors and local features.
 #[cfg(not(target_arch = "wasm32"))]
 mod binary;

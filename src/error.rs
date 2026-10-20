@@ -31,6 +31,10 @@ pub enum Error {
     /// An explicit reference download failed.
     #[error("download failed: {0}")]
     Download(String),
+    /// Selected candidate images must be supplied before sparse browser matching can resume.
+    #[cfg(feature = "web")]
+    #[error("selected reference images are not loaded")]
+    MissingReferenceImages(Vec<usize>),
     /// A configured inference backend could not load or run its model.
     #[error("recognition backend failed: {0}")]
     Backend(String),

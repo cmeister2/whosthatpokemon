@@ -11,9 +11,13 @@ pub mod evidence;
 #[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
 pub mod identify;
 
-/// Native Magic text recognition using a reusable, separately supplied OCR model.
-#[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
+/// Magic text recognition using a reusable, separately supplied OCR model.
+#[cfg(feature = "ocr")]
 pub mod ocr;
+
+/// Shared native and browser OCR, orientation and candidate-identification pipeline.
+#[cfg(all(feature = "ocr", any(not(target_arch = "wasm32"), feature = "web")))]
+pub mod recognition;
 
 /// Streaming bulk metadata preparation and resumable reference-image acquisition.
 #[cfg(not(target_arch = "wasm32"))]

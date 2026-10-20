@@ -3,8 +3,9 @@
 
 Only the explicit Scryfall references in the public page manifest are fetched.
 The model and English configuration are pinned independently of upstream defaults.
-No images are uploaded. The cache, enrollment catalogue and model files are build
-inputs, and must remain outside the published docs directory.
+No images are uploaded. Cache and enrollment catalogue stay outside source. The
+camera page packager explicitly copies these verified OCR assets into deployment;
+model weights and generated indexes are never checked into the repository.
 """
 
 import argparse

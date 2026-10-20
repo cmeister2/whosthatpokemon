@@ -164,7 +164,57 @@ can supply observations from another recognizer.
 
 The GitHub Pages gallery displays recorded runs of the native CLI with ocracle,
 including both observed fields and measured costs. Its JSON and pixel traces
-are generated as deployment artifacts. The browser does not run OCR or matching.
+are generated as deployment artifacts. That gallery viewer displays saved results;
+its separate linked camera page runs actual recognition in the browser.
 See [the pipeline gallery](matching.md#explore-the-pipeline).
+
+## Browser camera
+
+The linked camera page runs OCRacle's RTen recognizer in a dedicated Web Worker.
+It consumes browser-decoded RGBA pixels, then uses the shared native Rust title
+and collector-footer crops, opposite-orientation retry, bounded candidate lookup,
+geometric verification and conflict-aware decisions. There is no OCR substitution
+or server recognition. Start requests camera access; Stop and leaving the page
+release its tracks and terminate pending work. Frames are sampled only while the
+worker is free, so slow recognition cannot build a stale-frame queue.
+
+The camera page loads the complete English paper printing metadata snapshot,
+including separate physical faces, into compact title/footer and identity/artwork
+postings. Its displayed counts and source date describe the actual deployed
+snapshot. It downloads canonical reference images only after OCR has selected
+candidates, then encodes their pixels with the native reference builder. The
+visual cache is bounded to 512 faces; the matcher scores at most 256 proposed
+faces and verifies at most eight geometric candidates per pass. It never scans
+the entire catalogue's images on a frame. Cold scans can spend substantially more
+time acquiring and preparing references than repeat scans, with those costs
+shown separately. Reference images are fetched from Scryfall's public image CDN;
+input camera frames remain in the tab. The four-card rendered example includes
+a digital-only Vintage Masters Black Lotus image. The recorded gallery explicitly
+enrolls that image in its curated set; the camera's English paper catalogue can
+read its name while leaving that different artwork unresolved.
+
+The English metadata is a compressed deployment artifact generated from Scryfall
+bulk data. Other-language metadata in native catalogues stays available to native
+callers; the browser snapshot and OCR profile are English. The 21 MB recognizer
+and full metadata load once per active session. OCR readings are retained while
+reference pixels arrive, so asynchronous lookup does not repeat OCR. Completed
+cards are also retained while another card from the same frame is being resolved.
+
+Browser timings measure the viewer's machine. They include separate extraction,
+OCR, retrieval, matching and fusion measurements; rendering/PNG export and worker
+response overhead remain visible separately. They are distinct from the gallery's
+recorded native release timings. RTen uses browser WASM SIMD on one worker, so
+native four-thread latency is not a browser speed claim. The page requires a
+current browser with WebAssembly SIMD and a secure context (HTTPS or localhost)
+for camera access. Public example buttons exercise the same actual browser engine
+without requesting a camera.
+
+Build the gallery normally, then run `scripts/build-camera.sh /tmp/camera-engine`
+and `scripts/build-full-camera-catalogue.py --binary target/release/whosthatpokemon
+--cache /tmp/camera-catalogue-cache --output /tmp/catalogue.json.gz`, followed by
+`scripts/build-camera-page.py --metadata /tmp/catalogue.json.gz --cache
+/tmp/page-resources --engine /tmp/camera-engine --output /tmp/pages`.
+WASM, models, generated indexes and manifests stay outside the source tree and are
+packaged by Pages CI. See [development](development.md) for the complete build and verification commands.
 
 [Documentation](README.md)

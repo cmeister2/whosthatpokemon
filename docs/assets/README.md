@@ -30,7 +30,7 @@ lookup, candidate verification and evidence combination. The generated JSON reta
 model hashes, orientation attempts, candidate lists, abstentions and conflicts.
 PNG traces contain the actual extracted card, title and collector pixels, plus
 the two footer rows arranged side by side exactly as supplied to ocracle. The
-browser only displays these native results; it runs no OCR or matching and asks
+recorded gallery viewer only displays these native results; it runs no OCR or matching and asks
 for no input.
 
 Native stage times come from the generation machine, whose CPU, architecture,

@@ -769,59 +769,8 @@ fn run_ocr(arguments: OcrArgs) -> Result<(), Error> {
     write_json(&reports, arguments.output.as_deref())
 }
 
-/// Per-card elapsed times, excluding shared index and model initialization.
 #[cfg(feature = "ocr")]
-#[derive(Serialize)]
-struct IdentifyCardTimings {
-    /// Detector-free title and footer OCR across attempted orientations, in milliseconds.
-    ocr_ms: f64,
-    /// Title reading across attempted orientations, in milliseconds.
-    title_ocr_ms: f64,
-    /// Collector-bar reading across attempted orientations, in milliseconds.
-    footer_ocr_ms: f64,
-    /// Indexed retrieval, candidate-only visual checks and fusion, in milliseconds.
-    matching_ms: f64,
-    /// Total elapsed work for this extracted crop in milliseconds.
-    total_ms: f64,
-}
-
-/// One explicit card orientation and its title/footer-scoped identification.
-#[cfg(feature = "ocr")]
-#[derive(Serialize)]
-struct IdentificationAttempt {
-    /// Literal detector-free OCR evidence for this title crop.
-    ocr: mtg::ocr::TitleOcrEvidence,
-    /// Literal collector-bar rows read on every attempted orientation.
-    footer_ocr: mtg::ocr::FooterOcrEvidence,
-    /// Indexed title/footer proposals and candidate-only visual evidence.
-    identification: mtg::identify::FieldIdentification,
-    /// Combined title and footer recognizer time for this orientation.
-    ocr_ms: f64,
-    /// Title recognizer time for this orientation.
-    title_ocr_ms: f64,
-    /// Collector-bar recognizer time for this orientation.
-    footer_ocr_ms: f64,
-    /// Retrieval, sparse candidate loading, geometry and fusion elapsed time.
-    matching_ms: f64,
-}
-
-/// A source outline and one or two explicitly oriented title/footer attempts.
-#[cfg(feature = "ocr")]
-#[derive(Serialize)]
-struct IdentifiedCard {
-    /// Corners in oriented source-image coordinates.
-    corners: [[f32; 2]; 4],
-    /// Source outline area in square pixels.
-    area: f32,
-    /// Attempt chosen for the caller-facing provisional identity.
-    selected_attempt: usize,
-    /// Whether strong title or collector proposals disagree between tried orientations.
-    orientation_conflict: bool,
-    /// First expected orientation and, only after failure, its 180-degree opposite.
-    attempts: Vec<IdentificationAttempt>,
-    /// Actual elapsed crop processing times for this invocation.
-    timings: IdentifyCardTimings,
-}
+use mtg::recognition::IdentifiedCard;
 
 /// One complete image's detections, identifications and elapsed processing times.
 #[cfg(feature = "ocr")]
@@ -839,162 +788,6 @@ struct IdentifiedImage {
     total_ms: f64,
     /// Identified outlines; an empty list means no outline was detected.
     cards: Vec<IdentifiedCard>,
-}
-
-/// Whether scoped geometry and observed text accepted a semantic identity.
-#[cfg(feature = "ocr")]
-fn accepted_candidate_identity(result: &mtg::identify::CandidateIdentification) -> bool {
-    result.identity.card.is_some()
-        && matches!(
-            result.identity.status,
-            mtg::identify::CombinedStatus::Matched
-                | mtg::identify::CombinedStatus::VerifiedShortlist
-        )
-}
-
-/// Choose the strongest attempted orientation without converting scores to confidence.
-#[cfg(feature = "ocr")]
-fn select_identification_attempt(attempts: &[IdentificationAttempt]) -> usize {
-    let mut selected = 0;
-    for candidate in 1..attempts.len() {
-        if compare_identification_attempts(&attempts[candidate], &attempts[selected]).is_gt() {
-            selected = candidate;
-        }
-    }
-    selected
-}
-
-/// Order attempts by decision, actual verification count, then scoped retrieval scores.
-#[cfg(feature = "ocr")]
-fn compare_identification_attempts(
-    left: &IdentificationAttempt,
-    right: &IdentificationAttempt,
-) -> std::cmp::Ordering {
-    let left = &left.identification.result;
-    let right = &right.identification.result;
-    let rank = |status| match status {
-        mtg::identify::CombinedStatus::Matched => 4_u8,
-        mtg::identify::CombinedStatus::VerifiedShortlist => 3,
-        mtg::identify::CombinedStatus::Conflict => 2,
-        mtg::identify::CombinedStatus::Ambiguous => 1,
-        mtg::identify::CombinedStatus::Unknown => 0,
-    };
-    rank(left.identity.status)
-        .cmp(&rank(right.identity.status))
-        .then_with(|| {
-            left.visual
-                .geometry_verified_count
-                .cmp(&right.visual.geometry_verified_count)
-        })
-        .then_with(|| {
-            let score = |attempt: &mtg::identify::CandidateIdentification| {
-                attempt
-                    .visual
-                    .recognition
-                    .candidates
-                    .first()
-                    .map_or(0.0, |candidate| candidate.similarity)
-            };
-            score(left).total_cmp(&score(right))
-        })
-        .then_with(|| {
-            let score = |attempt: &mtg::identify::CandidateIdentification| {
-                attempt
-                    .text
-                    .title
-                    .first()
-                    .and_then(|candidate| candidate.title_similarity)
-                    .unwrap_or(0.0)
-            };
-            score(left).total_cmp(&score(right))
-        })
-}
-
-/// Report contradictory strong title or collector identities across tried orientations.
-#[cfg(feature = "ocr")]
-fn attempts_disagree(attempts: &[IdentificationAttempt]) -> bool {
-    attempts.iter().enumerate().any(|(offset, left)| {
-        attempts[offset + 1..].iter().any(|right| {
-            field_orientations_disagree(
-                &left.identification.result.text,
-                &right.identification.result.text,
-            )
-        })
-    })
-}
-
-/// Include cross-channel disagreements without treating missing fields as contradictions.
-#[cfg(feature = "ocr")]
-fn field_orientations_disagree(
-    left: &mtg::identify::TextCandidates,
-    right: &mtg::identify::TextCandidates,
-) -> bool {
-    let left_footer = strong_footer_cards(&left.footer);
-    let right_footer = strong_footer_cards(&right.footer);
-    strong_title_sets_disagree(&left.title, &right.title)
-        || disjoint_identity_sets(&left_footer, &right_footer)
-        || disjoint_identity_sets(&strong_title_cards(&left.title), &right_footer)
-        || disjoint_identity_sets(&left_footer, &strong_title_cards(&right.title))
-}
-
-/// Whether two near-best strong title sets have no semantic identity in common.
-#[cfg(feature = "ocr")]
-fn strong_title_sets_disagree(
-    left: &[mtg::evidence::TextMatch],
-    right: &[mtg::evidence::TextMatch],
-) -> bool {
-    let left = strong_title_cards(left);
-    let right = strong_title_cards(right);
-    disjoint_identity_sets(&left, &right)
-}
-
-/// Retain every language-compatible collector proposal for orientation-conflict reporting.
-#[cfg(feature = "ocr")]
-fn strong_footer_cards(matches: &[mtg::evidence::TextMatch]) -> Vec<&CardMetadata> {
-    matches
-        .iter()
-        .filter(|hit| hit.footer_match && hit.language_match != Some(false))
-        .map(|hit| &hit.card)
-        .collect()
-}
-
-/// Whether two nonempty observations share no game-scoped semantic identity.
-#[cfg(feature = "ocr")]
-fn disjoint_identity_sets(left: &[&CardMetadata], right: &[&CardMetadata]) -> bool {
-    !left.is_empty()
-        && !right.is_empty()
-        && !left
-            .iter()
-            .any(|left| right.iter().any(|right| same_card_identity(left, right)))
-}
-
-/// Return the near-best, strong title identities from one orientation attempt.
-#[cfg(feature = "ocr")]
-fn strong_title_cards(matches: &[mtg::evidence::TextMatch]) -> Vec<&CardMetadata> {
-    let best = matches
-        .iter()
-        .filter_map(|candidate| candidate.title_similarity)
-        .fold(0.0_f32, f32::max);
-    matches
-        .iter()
-        .filter(|candidate| {
-            candidate
-                .title_similarity
-                .is_some_and(|score| score >= 0.90 && score + 0.05 >= best)
-        })
-        .map(|candidate| &candidate.card)
-        .collect()
-}
-
-/// Compare the game-scoped semantic grouping used by matching and fusion.
-#[cfg(feature = "ocr")]
-fn same_card_identity(left: &CardMetadata, right: &CardMetadata) -> bool {
-    left.game == right.game
-        && match (&left.oracle_id, &right.oracle_id) {
-            (Some(left), Some(right)) => left == right,
-            (None, None) => left.id == right.id,
-            _ => false,
-        }
 }
 
 /// Reuse the visual metadata, text postings and OCR engine across a batch of images.
@@ -1075,73 +868,31 @@ fn run_identify(arguments: IdentifyArgs) -> Result<(), Error> {
         fs::create_dir(directory)?;
     }
     let recognize = |image: &image::DynamicImage, corners, area| {
-        let started = Instant::now();
-        let run_attempt = |rotation_degrees| {
-            let ocr_started = Instant::now();
-            let ocr = engine.read_title(image, layout, rotation_degrees)?;
-            let title_ocr_ms = ocr_started.elapsed().as_secs_f64() * 1000.0;
-            let footer_started = Instant::now();
-            let footer_ocr = engine.read_footer(image, layout, rotation_degrees)?;
-            let footer_ocr_ms = footer_started.elapsed().as_secs_f64() * 1000.0;
-            let observations = mtg::evidence::TextObservations {
-                title: ocr.reading.text.clone(),
-                footer: footer_ocr.observations.footer.clone(),
-                ..mtg::evidence::TextObservations::default()
-            };
-            let matching_started = Instant::now();
-            let candidate_options = whosthatpokemon::matching::CandidateOptions {
-                max_descriptors: arguments.max_candidates,
-                max_geometry: arguments.max_geometry,
-                orientations: if rotation_degrees == 0 {
-                    whosthatpokemon::matching::CandidateOrientations::Upright
-                } else {
-                    whosthatpokemon::matching::CandidateOrientations::Inverted
-                },
-            };
-            let identification = mtg::identify::identify_fields_with(
-                &index,
-                text.as_ref(),
-                &footer_index,
-                image,
-                &observations,
-                &options,
-                arguments.title_candidates,
-                &candidate_options,
-            )?;
-            Ok::<_, Error>(IdentificationAttempt {
-                ocr,
-                footer_ocr,
-                identification,
-                ocr_ms: title_ocr_ms + footer_ocr_ms,
-                title_ocr_ms,
-                footer_ocr_ms,
-                matching_ms: matching_started.elapsed().as_secs_f64() * 1000.0,
-            })
-        };
-        let mut attempts = vec![run_attempt(arguments.rotation)?];
-        if !accepted_candidate_identity(&attempts[0].identification.result) {
-            attempts.push(run_attempt((arguments.rotation + 180) % 360)?);
-        }
-        let selected_attempt = select_identification_attempt(&attempts);
-        let orientation_conflict = attempts_disagree(&attempts);
-        let ocr_ms = attempts.iter().map(|attempt| attempt.ocr_ms).sum();
-        let title_ocr_ms = attempts.iter().map(|attempt| attempt.title_ocr_ms).sum();
-        let footer_ocr_ms = attempts.iter().map(|attempt| attempt.footer_ocr_ms).sum();
-        let matching_ms = attempts.iter().map(|attempt| attempt.matching_ms).sum();
-        Ok::<_, Error>(IdentifiedCard {
+        mtg::recognition::identify_crop(
+            &engine,
+            image,
+            layout,
+            arguments.rotation,
             corners,
             area,
-            selected_attempt,
-            orientation_conflict,
-            attempts,
-            timings: IdentifyCardTimings {
-                ocr_ms,
-                title_ocr_ms,
-                footer_ocr_ms,
-                matching_ms,
-                total_ms: started.elapsed().as_secs_f64() * 1000.0,
+            &whosthatpokemon::matching::CandidateOptions {
+                max_descriptors: arguments.max_candidates,
+                max_geometry: arguments.max_geometry,
+                ..Default::default()
             },
-        })
+            |observations, candidate_options| {
+                mtg::identify::identify_fields_with(
+                    &index,
+                    text.as_ref(),
+                    &footer_index,
+                    image,
+                    observations,
+                    &options,
+                    arguments.title_candidates,
+                    candidate_options,
+                )
+            },
+        )
     };
     let mut reports = Vec::new();
     for (image_number, input) in arguments.images.into_iter().enumerate() {
@@ -1535,81 +1286,6 @@ fn write_json(value: &impl Serialize, output: Option<&Path>) -> Result<(), Error
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Orientation conflict compares strong identity sets rather than first-result order.
-    #[cfg(feature = "ocr")]
-    #[test]
-    fn title_orientation_conflict_uses_near_best_identity_sets() {
-        let card = |id: &str| CardMetadata {
-            game: "invented".into(),
-            id: id.into(),
-            oracle_id: Some(id.into()),
-            name: id.into(),
-            ..CardMetadata::default()
-        };
-        let hit = |card: &CardMetadata, score| mtg::evidence::TextMatch {
-            card: card.clone(),
-            title_similarity: Some(score),
-            rules_similarity: None,
-            rules_coverage: None,
-            footer_match: false,
-            language_match: None,
-            score,
-            reasons: Vec::new(),
-        };
-        let first = card("first");
-        let second = card("second");
-        let other = card("other");
-        assert!(!strong_title_sets_disagree(
-            &[hit(&first, 0.95), hit(&second, 0.94)],
-            &[hit(&second, 0.95), hit(&first, 0.94)]
-        ));
-        assert!(strong_title_sets_disagree(
-            &[hit(&first, 1.0)],
-            &[hit(&other, 0.96)]
-        ));
-        assert!(!strong_title_sets_disagree(
-            &[hit(&first, 0.89)],
-            &[hit(&other, 1.0)]
-        ));
-    }
-
-    /// A readable title and an opposite footer conflict unless their identity sets overlap.
-    #[cfg(feature = "ocr")]
-    #[test]
-    fn opposite_footer_retains_identity_alternatives_and_language_disagreements() {
-        let card = |id: &str| CardMetadata {
-            game: "invented".into(),
-            id: id.into(),
-            oracle_id: Some(id.into()),
-            ..CardMetadata::default()
-        };
-        let hit = |id: &str, footer_match: bool| mtg::evidence::TextMatch {
-            card: card(id),
-            title_similarity: (!footer_match).then_some(1.0),
-            rules_similarity: None,
-            rules_coverage: None,
-            footer_match,
-            language_match: None,
-            score: 1.0,
-            reasons: Vec::new(),
-        };
-        let candidates = |title, footer| mtg::identify::TextCandidates {
-            title_identities: Vec::new(),
-            title,
-            rules: Vec::new(),
-            footer,
-            hints: Vec::new(),
-        };
-        let upright = candidates(vec![hit("first", false)], Vec::new());
-        let mut inverted = candidates(Vec::new(), vec![hit("other", true)]);
-        assert!(field_orientations_disagree(&upright, &inverted));
-        inverted.footer.push(hit("first", true));
-        assert!(!field_orientations_disagree(&upright, &inverted));
-        inverted.footer.pop();
-        inverted.footer[0].language_match = Some(false);
-        assert!(!field_orientations_disagree(&upright, &inverted));
-    }
 
     /// Trace images preserve upright input and show the recorded opposite orientation exactly.
     #[cfg(feature = "ocr")]

@@ -883,9 +883,9 @@ dependencies = [
 
 [[package]]
 name = "ocracle"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04befe72680781c1a17e1be5351ef0fd9a1909860f88d4d80a2992983eb8e41e"
+checksum = "a5f4802f5388288543f1dc9755660340dfec64d85e84683afcb64689685be7af"
 dependencies = [
  "anyhow",
  "clap",

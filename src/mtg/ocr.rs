@@ -81,13 +81,36 @@ pub struct FooterOcrEvidence {
     pub observations: TextObservations,
 }
 
-/// Reusable native OCR engine with explicitly supplied, locally stored models.
+/// Reusable native or browser OCR engine with explicitly supplied, locally stored models.
 pub struct MagicOcr {
     /// Loaded detection and recognition networks shared across successive crops.
     engine: CardOcr,
 }
 
 impl MagicOcr {
+    /// Load detector-free OCR from model and configuration bytes without a filesystem.
+    ///
+    /// This uses the same OCRacle RTen backend, normalization and raw provenance
+    /// as native file loading. Callers verify deployment pins before initialization
+    /// and reuse the returned engine for successive camera frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid configuration, wrong language or incompatible weights.
+    pub fn from_bytes(model: Vec<u8>, configuration: &[u8], language: &str) -> Result<Self, Error> {
+        let config: ModelConfig = serde_json::from_slice(configuration)
+            .map_err(|error| Error::Backend(format!("ocracle configuration: {error}")))?;
+        if config.language != language {
+            return Err(Error::Backend(format!(
+                "ocracle configuration language {:?} does not match {language:?}",
+                config.language
+            )));
+        }
+        let engine = CardOcr::load_bytes(model, None, config)
+            .map_err(|error| Error::Backend(format!("ocracle: {error:#}")))?;
+        Ok(Self { engine })
+    }
+
     /// Load the default `ocracle` recognizer for one printed language.
     ///
     /// `model_root` contains `models/profiles.json` and the separately downloaded

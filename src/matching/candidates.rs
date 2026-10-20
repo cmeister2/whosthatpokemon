@@ -3,6 +3,8 @@
 #[cfg(feature = "web")]
 use std::collections::HashMap;
 
+use std::collections::BTreeMap;
+
 #[cfg(feature = "web")]
 use super::CatalogIndex;
 use super::{Reference, finish_recognition, local, same_face, same_identity};
@@ -43,13 +45,13 @@ pub(super) trait CandidateSource {
         &self,
         shard: usize,
         offsets: &[usize],
-    ) -> Result<Vec<Option<Reference>>, Error>;
+    ) -> Result<BTreeMap<usize, Reference>, Error>;
     /// Read only the requested local feature records.
     fn read_candidate_local_features(
         &self,
         shard: usize,
         offsets: &[usize],
-    ) -> Result<Vec<Option<Vec<local::Feature>>>, Error>;
+    ) -> Result<BTreeMap<usize, Vec<local::Feature>>, Error>;
     /// Preserve shared-art ambiguity when the search happens to cover the gallery.
     fn illustration_ambiguity(&self, recognition: &mut Recognition) -> Result<(), Error>;
 }
@@ -207,15 +209,18 @@ impl CandidateSource for CatalogCandidateSource<'_> {
         &self,
         shard: usize,
         offsets: &[usize],
-    ) -> Result<Vec<Option<Reference>>, Error> {
-        let mut selected = vec![None; offsets.iter().max().map_or(0, |offset| offset + 1)];
+    ) -> Result<BTreeMap<usize, Reference>, Error> {
+        let mut selected = BTreeMap::new();
         for &offset in offsets {
             let reference = self.reference(shard, offset)?;
-            selected[offset] = Some(Reference {
-                card: reference.card.clone(),
-                views: reference.views.clone(),
-                features: Vec::new(),
-            });
+            selected.insert(
+                offset,
+                Reference {
+                    card: reference.card.clone(),
+                    views: reference.views.clone(),
+                    features: Vec::new(),
+                },
+            );
         }
         Ok(selected)
     }
@@ -224,10 +229,10 @@ impl CandidateSource for CatalogCandidateSource<'_> {
         &self,
         shard: usize,
         offsets: &[usize],
-    ) -> Result<Vec<Option<Vec<local::Feature>>>, Error> {
-        let mut selected = vec![None; offsets.iter().max().map_or(0, |offset| offset + 1)];
+    ) -> Result<BTreeMap<usize, Vec<local::Feature>>, Error> {
+        let mut selected = BTreeMap::new();
         for &offset in offsets {
-            selected[offset] = Some(self.reference(shard, offset)?.features.clone());
+            selected.insert(offset, self.reference(shard, offset)?.features.clone());
         }
         Ok(selected)
     }
@@ -283,15 +288,28 @@ impl CandidateSource for super::ShardedIndex {
         &self,
         shard: usize,
         offsets: &[usize],
-    ) -> Result<Vec<Option<Reference>>, Error> {
-        self.read_candidate_globals(shard, offsets)
+    ) -> Result<BTreeMap<usize, Reference>, Error> {
+        self.read_candidate_globals(shard, offsets).map(|records| {
+            records
+                .into_iter()
+                .enumerate()
+                .filter_map(|(offset, record)| record.map(|record| (offset, record)))
+                .collect()
+        })
     }
     fn read_candidate_local_features(
         &self,
         shard: usize,
         offsets: &[usize],
-    ) -> Result<Vec<Option<Vec<local::Feature>>>, Error> {
+    ) -> Result<BTreeMap<usize, Vec<local::Feature>>, Error> {
         self.read_candidate_local_features(shard, offsets)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(offset, record)| record.map(|record| (offset, record)))
+                    .collect()
+            })
     }
     fn illustration_ambiguity(&self, recognition: &mut Recognition) -> Result<(), Error> {
         self.illustration_ambiguity(recognition)
