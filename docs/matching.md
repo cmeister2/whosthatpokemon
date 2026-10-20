@@ -114,7 +114,8 @@ The [pipeline gallery](https://cmeister2.github.io/whosthatpokemon/) opens a
 complete public example without requiring an upload. It follows actual runs of
 the native Rust library: source picture, detected boundaries and magicextract
 rectifications, literal ocracle title readings, indexed candidate lookup,
-shortlisted visual comparisons and combined identity/printing decisions. Other
+shortlisted visual comparisons and the returned ranked matches, alongside
+combined identity/printing decisions. Other
 examples include a four-card scene with Counterspell, an empty scene and the
 Christopher Rush Alpha Lightning Bolt scan. Detected cards and recorded
 orientation attempts can be inspected individually.
@@ -141,6 +142,11 @@ repository; they are deployment artifacts rather than committed evidence. See
 has no upload, OCR-model download or card-adjustment flow. Conventional portrait
 title regions can fail on unusual frames, and a verified card identity can still
 leave the printing ambiguous. Similarity and OCR scores remain heuristics, not
-calibrated identity probabilities.
+calibrated identity probabilities. The final panel displays each returned
+printing’s visual similarity on its original 0–1 scale, with geometric agreement
+and the native identity/printing decision. The bars preserve those scores; they
+are not normalized into probabilities. Native full-catalogue confidence remains
+unestablished when only a shortlist was checked; if the native search was
+complete, the decision details show its uncalibrated printing confidence.
 
 [Documentation](README.md)

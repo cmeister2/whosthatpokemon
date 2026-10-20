@@ -172,7 +172,10 @@ function renderVisual(result) {
 }
 
 function renderResult(detected) {
-  const result = detected.attempts[detected.selected_attempt].identification;
+  const selected = detected.attempts[detected.selected_attempt];
+  const result = selected.identification;
+  const visual = result.visual;
+  const matches = visual.recognition?.candidates || [];
   const container = $('recognition-result');
   container.replaceChildren();
   const conflict = detected.orientation_conflict;
@@ -180,27 +183,67 @@ function renderResult(detected) {
   const line = node('div', 'result-topline');
   line.append(node('span', `status-pill ${conflict ? 'conflict' : isAccepted ? 'matched' : result.identity.status}`, conflict ? 'Conflicting orientations' : isAccepted ? 'Card identified' : result.identity.status === 'conflict' ? 'Conflicting evidence' : 'Not identified'));
   container.append(line);
-  if (isAccepted && result.identity.card) {
-    const identity = result.identity.card;
-    const best = result.visual.recognition.candidates.find((entry) => entry.card.oracle_id ? entry.card.oracle_id === identity.oracle_id && entry.card.game === identity.game : entry.card.id === identity.printing_id && entry.card.game === identity.game);
-    const ref = referenceFor(best?.card);
-    const row = node('div', 'recognition-card');
-    if (ref?.image) {
-      const image = node('img', 'reference-thumb');
-      image.src = ref.image;
-      image.alt = `${identity.name} reference`;
-      row.append(image);
+  if (conflict) container.append(node('p', 'result-provisional-note', `Ranking from the provisional ${selected.ocr.rotation_degrees}° attempt; no identity accepted across orientations.`));
+
+  const ranking = node('ol', 'result-ranking');
+  ranking.id = 'result-ranking';
+  matches.forEach((candidate, index) => {
+    const name = candidate.card.face_name || candidate.card.name;
+    const label = printing(candidate.card);
+    const reference = referenceFor(candidate.card);
+    const verified = (visual.geometry_verified || []).some((entry) => entry.card.game === candidate.card.game && entry.card.id === candidate.card.id && entry.card.face_index === candidate.card.face_index);
+    const row = node('li', `result-match${index === 0 ? ' leading-match' : ''}`);
+    row.dataset.rank = String(index + 1);
+    row.dataset.similarity = String(candidate.similarity);
+    const heading = node('div', 'result-match-heading');
+    heading.append(node('span', 'result-match-rank', String(index + 1)));
+    if (reference?.image) {
+      const image = node('img', 'result-match-thumb');
+      image.src = reference.image;
+      image.alt = `${name}, ${label}${reference.artist ? `, art by ${reference.artist}` : ''}`;
+      heading.append(image);
     }
-    const text = node('div');
-    text.append(node('h3', 'result-name', identity.name));
-    text.append(node('p', 'result-caveat', result.printing.card ? `Printing: ${printing(result.printing.card)}` : 'Printing unresolved'));
-    if (ref?.artist) text.append(node('p', 'result-artist', `Reference art: ${ref.artist}`));
-    row.append(text);
-    container.append(row);
-  } else container.append(node('p', 'result-name', conflict ? 'The title readings disagree' : result.identity.status === 'conflict' ? 'The evidence disagrees' : 'More evidence needed'));
-  container.append(node('p', 'result-caveat', conflict ? 'The native run flagged strong, conflicting title identities across its orientation attempts. Its selected attempt is provisional, so this gallery does not present it as an accepted identity.' : result.identity.reason));
-  if (!conflict && result.printing.reason) container.append(node('p', 'result-caveat', result.printing.reason));
-  for (const entry of result.conflicts || []) container.append(node('p', 'result-caveat', `${entry.resolved ? 'Resolved' : 'Unresolved'} ${entry.kind} disagreement: ${entry.reason}`));
+    const information = node('div', 'result-match-information');
+    information.append(node('strong', 'result-match-name', name));
+    information.append(node('span', 'result-match-printing', label));
+    const geometry = node('span', 'result-geometry-badge', verified ? 'Geometry agrees' : 'Unverified');
+    geometry.dataset.verified = String(verified);
+    information.append(geometry);
+    heading.append(information);
+    const scoreLine = node('div', 'result-score-line');
+    scoreLine.append(node('span', '', 'Visual similarity'), node('strong', 'result-match-score', score(candidate.similarity)));
+    const bar = node('meter', 'result-similarity-meter');
+    bar.min = 0;
+    bar.max = 1;
+    bar.value = candidate.similarity;
+    bar.setAttribute('aria-label', `${name}, ${label}: visual similarity`);
+    bar.setAttribute('aria-valuetext', `${score(candidate.similarity)} on a scale from 0 to 1`);
+    bar.textContent = score(candidate.similarity);
+    row.append(heading, scoreLine, bar);
+    ranking.append(row);
+  });
+  container.append(ranking);
+  if (!matches.length) ranking.append(node('li', 'empty-state', 'No ranked image matches were returned.'));
+  if (matches.length > 1) container.append(node('p', 'result-margin', `Top-to-next similarity gap: ${score(matches[0].similarity - matches[1].similarity)}.`));
+  if (matches.length) container.append(node('p', 'result-score-note', 'Scores compare the shortlisted printings on a 0–1 scale; they are not probabilities.'));
+
+  const decision = node('dl', 'result-decision');
+  decision.append(node('dt', '', 'Identity'), node('dd', 'result-identity', conflict ? 'Conflicting orientations' : isAccepted && result.identity.card ? result.identity.card.name : 'Not identified'));
+  decision.append(node('dt', '', 'Printing'), node('dd', 'result-printing-decision', !conflict && result.printing.card ? printing(result.printing.card) : 'Unresolved'));
+  container.append(decision);
+
+  const details = node('details', 'result-decision-details');
+  details.append(node('summary', '', 'Native decision details'));
+  const confidenceText = visual.search_complete
+    ? `Native heuristic printing confidence: ${score(visual.recognition.confidence)} on a 0–1 scale. This score is uncalibrated.`
+    : 'Native confidence is not established across the full catalogue for this candidate-only search. The ranking shows the returned visual similarities.';
+  const confidence = node('p', 'result-caveat', confidenceText);
+  confidence.id = 'result-confidence-note';
+  details.append(confidence);
+  details.append(node('p', 'result-caveat', conflict ? 'The native run flagged strong, conflicting title identities across its orientation attempts. Its selected attempt is provisional.' : result.identity.reason));
+  if (!conflict && result.printing.reason) details.append(node('p', 'result-caveat', result.printing.reason));
+  for (const entry of result.conflicts || []) details.append(node('p', 'result-caveat', `${entry.resolved ? 'Resolved' : 'Unresolved'} ${entry.kind} disagreement: ${entry.reason}`));
+  container.append(details);
 }
 
 function renderAttempts(detected) {
