@@ -705,3 +705,57 @@ fn candidate_timings_accepts_legacy_serialized_fields() {
     assert_eq!(timings.local_feature_read, 0.0);
     assert_eq!(timings.geometry_verification, 0.0);
 }
+
+/// Portable indexed storage preserves the native candidate decisions, scopes and budgets.
+#[cfg(feature = "web")]
+#[test]
+fn portable_candidate_adapter_matches_binary_storage() {
+    let directory = Directory::new();
+    let target = card("target", "target", "shared-art");
+    let mut fallback = card("fallback", "unused", "fallback-art");
+    fallback.oracle_id = None;
+    let mut other_game = target.clone();
+    other_game.game = "other-game".into();
+    let (memory, disk) = gallery(
+        &directory,
+        &[
+            (target.clone(), 7),
+            (card("reprint", "target", "other-art"), 11),
+            (
+                card("shared-art-alternative", "alternative", "shared-art"),
+                19,
+            ),
+            (fallback.clone(), 23),
+            (other_game, 31),
+        ],
+    );
+    let lookup = super::super::CatalogCandidateLookup::new(&memory);
+    for (proposals, geometry, descriptors) in [
+        (vec![target.clone()], 2, 2),
+        (vec![target.clone(), fallback.clone()], 5, 8),
+        (vec![target], 5, 8),
+        (vec![fallback], 1, 1),
+        (Vec::new(), 1, 1),
+    ] {
+        let options = CandidateOptions {
+            max_descriptors: descriptors,
+            max_geometry: geometry,
+            orientations: CandidateOrientations::UprightAndInverted,
+        };
+        let mut portable = lookup
+            .recognize(
+                &memory,
+                &image(7),
+                &MatchOptions::default(),
+                &options,
+                &proposals,
+            )
+            .unwrap();
+        let mut native = disk
+            .recognize_candidates_with(&image(7), &MatchOptions::default(), &options, &proposals)
+            .unwrap();
+        portable.timings = CandidateTimings::default();
+        native.timings = CandidateTimings::default();
+        assert_eq!(portable, native);
+    }
+}

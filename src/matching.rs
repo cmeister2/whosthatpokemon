@@ -23,6 +23,12 @@ use serde::{Deserialize, Serialize};
 /// Portable local geometry used when global evidence is insufficient.
 mod local;
 
+/// Storage adapters and rankings shared by native and browser candidate searches.
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
+mod candidates;
+#[cfg(feature = "web")]
+pub(crate) use candidates::CatalogCandidateLookup;
+
 /// Lossless native persistence with separate global descriptors and local features.
 #[cfg(not(target_arch = "wasm32"))]
 mod binary;
@@ -33,10 +39,10 @@ mod sharded;
 #[cfg(not(target_arch = "wasm32"))]
 pub use sharded::{ShardedIndex, ShardedIndexBuilder};
 
-/// Bounded candidate geometry with explicit full-gallery global evidence.
-#[cfg(not(target_arch = "wasm32"))]
+/// Bounded candidate geometry with explicitly scoped visual evidence.
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
 mod shortlist;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
 pub use shortlist::{
     CandidateOptions, CandidateOrientations, CandidateRecognition, CandidateTimings,
     GeometryVerification, ShortlistFace, ShortlistOptions, ShortlistScope, ShortlistedRecognition,

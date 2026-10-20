@@ -110,25 +110,33 @@ The [native OCR guide](ocr.md) explains how to obtain raw readings with ocracle.
 
 ## Explore the pipeline
 
-The [pipeline explorer](https://cmeister2.github.io/whosthatpokemon/) shows the
-capture, detected quadrilaterals, actual `magicextract` rectifications, ranked
-visual matches and the measurements behind them. Upload an image or capture one
-with a camera to run the Rust extractor and portable matcher as WebAssembly in
-your browser. Images stay in the tab. The bundled catalogue is a small public
-demonstration set, so cards outside it may remain unknown.
+The [pipeline explorer](https://cmeister2.github.io/whosthatpokemon/) runs a
+public example automatically and follows one card through the identification
+process: source picture, detected boundary and perspective-corrected crop,
+literal title OCR, indexed name lookup, shortlisted image comparisons and a
+combined decision. The title search proposes card identities before visual
+verification; reprints do not add independent votes. The visual stage uses a
+bounded candidate set and never falls back to checking the entire catalogue.
 
-The title, rules and collector-footer regions can run English OCR locally using
-self-hosted Tesseract.js. Its raw text is editable. Text search compares titles
-fuzzily, compares both printed and Oracle rules wording, and requires a set code
-alongside a collector number for a footer lookup. Text rankings are separate
-from the visual acceptance decision; neither score is a calibrated probability.
-OCR confidence describes the text reading, not card identity.
+The page uses the same Rust title lookup, candidate matching and combined
+evidence policy as the native library, compiled to WebAssembly. English title
+OCR uses self-hosted Tesseract.js in the browser; native OCR uses ocracle. The
+browser illustration and native application therefore have different timings.
+Text proposals alone do not accept a card, conflicting evidence remains visible,
+and the card identity can be known while its printing stays ambiguous. Similarity
+and OCR confidence scores are heuristics, not calibrated identity probabilities.
 
-Conventional modern and classic portrait templates are approximate. Split,
-adventure, showcase and full-art cards need other region geometry. Printed
-collector numbers began with [Exodus in 1998](https://magic.wizards.com/en/news/making-magic/my-day-2014-05-12-0);
-older cards can have no printed number. The [M15 footer](https://magic.wizards.com/en/news/making-magic/directors-chair-2013-2014-01-06)
-places set, collector number, rarity and language together. Scryfall assigning a
-catalogue number does not mean that number is visible on an old card.
+Every stage displays a duration measured on the viewer's device. End-to-end time
+includes scene extraction and the selected card's processing; one-time OCR
+model/index setup is shown separately. The explorer executes the pipeline rather
+than replaying prerecorded reports or benchmark figures. Optional controls let
+you choose another public example, upload a picture or use a camera. Pictures
+stay in the tab. The bundled catalogue contains only 28 public printings, so
+cards outside it may remain unidentified.
+
+The modern and classic title bands assume conventional portrait frames. Split,
+adventure, showcase and full-art cards can need different regions. Legacy visual
+scan and independent text-search APIs remain available for diagnostics and
+sample-report generation; they are not the page's default route.
 
 [Documentation](README.md)

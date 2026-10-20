@@ -7,17 +7,18 @@
 //! calibrated probabilities. Complete visual decisions remain distinct from a
 //! geometrically verified shortlist whose omitted geometry is still unknown.
 
+#[cfg(not(target_arch = "wasm32"))]
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use super::evidence::{
     TextIndex, TextMatch, TextObservations, TitleIdentityProposal, TitleProposer,
 };
-use crate::matching::{
-    CandidateOptions, CandidateOrientations, CandidateRecognition, ShardedIndex, ShortlistOptions,
-    ShortlistScope, ShortlistedRecognition,
-};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::matching::{CandidateOptions, CandidateOrientations, ShardedIndex, ShortlistOptions};
+use crate::matching::{CandidateRecognition, ShortlistScope, ShortlistedRecognition};
 use crate::{CardMetadata, Error, MatchOptions, MatchStatus, Recognition};
 
 /// Near-best title similarity required to treat disagreement as a strong conflict.
@@ -327,6 +328,7 @@ pub struct CandidateIdentification {
 ///
 /// Returns errors for invalid options, invalid query images, or unavailable,
 /// corrupt or otherwise invalid visual catalogue data. No network is used.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn identify(
     visual_index: &ShardedIndex,
     text_index: &TextIndex,
@@ -355,6 +357,7 @@ pub fn identify(
 ///
 /// Returns errors for zero budgets, invalid matching options or image input,
 /// unsupported legacy visual storage, or unavailable/corrupt candidate records.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn identify_title<T: TitleProposer + ?Sized>(
     visual_index: &ShardedIndex,
     text_index: &T,
@@ -389,6 +392,7 @@ pub fn identify_title<T: TitleProposer + ?Sized>(
 ///
 /// Returns errors for a zero title budget, invalid matching/candidate options or
 /// image input, unsupported legacy storage, or corrupt selected records.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn identify_title_with<T: TitleProposer + ?Sized>(
     visual_index: &ShardedIndex,
     text_index: &T,
@@ -418,9 +422,36 @@ pub fn identify_title_with<T: TitleProposer + ?Sized>(
     )?;
     let visual_matching = stage_started.elapsed().as_secs_f64() * 1_000.0;
     let stage_started = Instant::now();
+    let mut result = combine_candidates(observations, text, visual, match_options)?;
+    let fusion = stage_started.elapsed().as_secs_f64() * 1_000.0;
+    result.timings = CandidateIdentificationTimings {
+        text_retrieval,
+        visual_matching,
+        fusion,
+        total: total_started.elapsed().as_secs_f64() * 1_000.0,
+    };
+    Ok(result)
+}
+
+/// Apply the same conflict-aware identity policy to already collected candidate evidence.
+///
+/// This separates retrieval, visual verification and final decision for callers that
+/// execute OCR outside Rust. The supplied evidence retains its original search scope;
+/// text alone cannot accept a card or establish an exact physical printing.
+/// Timing fields remain zero because the caller measures these separate stages.
+///
+/// # Errors
+///
+/// Returns an error for invalid match options.
+pub fn combine_candidates(
+    observations: &TextObservations,
+    text: TextCandidates,
+    visual: CandidateRecognition,
+    match_options: &MatchOptions,
+) -> Result<CandidateIdentification, Error> {
+    match_options.validate()?;
     let adapted = candidate_shortlist_view(&visual);
     let combined = combine(observations, text.clone(), adapted, match_options);
-    let fusion = stage_started.elapsed().as_secs_f64() * 1_000.0;
     Ok(CandidateIdentification {
         observations: observations.clone(),
         text,
@@ -428,12 +459,7 @@ pub fn identify_title_with<T: TitleProposer + ?Sized>(
         identity: combined.identity,
         printing: combined.printing,
         conflicts: combined.conflicts,
-        timings: CandidateIdentificationTimings {
-            text_retrieval,
-            visual_matching,
-            fusion,
-            total: total_started.elapsed().as_secs_f64() * 1_000.0,
-        },
+        timings: CandidateIdentificationTimings::default(),
     })
 }
 
@@ -930,5 +956,5 @@ fn same_face(left: &CardMetadata, right: &CardMetadata) -> bool {
     left.game == right.game && left.id == right.id && left.face_index == right.face_index
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

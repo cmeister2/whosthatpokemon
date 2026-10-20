@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-#[cfg(any(not(target_arch = "wasm32"), test))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "web", test))]
 use image::RgbImage;
 use image::{DynamicImage, GrayImage, imageops::FilterType};
 use serde::{Deserialize, Serialize};
@@ -103,7 +103,7 @@ pub(super) fn extract(image: &DynamicImage) -> Vec<Feature> {
 }
 
 /// Extract descriptors from an RGB query already normalized for geometric verification.
-#[cfg(any(not(target_arch = "wasm32"), test))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "web", test))]
 pub(super) fn extract_normalized_rgb(image: &RgbImage) -> Vec<Feature> {
     debug_assert_eq!(image.dimensions(), (WIDTH, HEIGHT));
     // Keep DynamicImage's colour-space-aware conversion so this path produces
@@ -113,7 +113,7 @@ pub(super) fn extract_normalized_rgb(image: &RgbImage) -> Vec<Feature> {
 }
 
 /// Reuse normalized RGB for native RGB queries and preserve other format conversions.
-#[cfg(any(not(target_arch = "wasm32"), test))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "web", test))]
 pub(super) fn extract_query(image: &DynamicImage, normalized_rgb: &RgbImage) -> Vec<Feature> {
     if image.as_rgb8().is_some() {
         extract_normalized_rgb(normalized_rgb)

@@ -44,6 +44,44 @@ try {
   assert.equal(footer[0].card.collector_number, "806");
   assert.equal(footer[0].language_match, true);
   console.log("Text: noisy title/rules retrieve reprints; exact footer resolves printing; short text stays unresolved");
+
+  // This engine-level check supplies a known title to isolate the stage protocol;
+  // the page itself obtains its title from the live browser OCR worker.
+  const reference = manifest.references.find((card) => card.name === "Lightning Bolt");
+  const extraction = JSON.parse(engine.extract(await load(reference.image), true));
+  assert.equal(extraction.cards.length, 1);
+  const crop = extraction.cards[0];
+  assert.equal(crop.crop_data_url, crop.raw_crop_data_url);
+  assert.equal(Object.hasOwn(crop, "recognition"), false, "extraction performs no matching");
+  const cropBytes = Buffer.from(crop.raw_crop_data_url.split(",")[1], "base64");
+  const titleCandidatesJson = engine.lookup_title(reference.name);
+  const titleCandidates = JSON.parse(titleCandidatesJson);
+  assert.equal(titleCandidates.title_identities.length, 1, "reprints occupy one title slot");
+  assert.equal(titleCandidates.title_identities[0].exact, true);
+  const candidateJson = engine.verify_candidates(cropBytes, titleCandidatesJson, 0);
+  const candidate = JSON.parse(candidateJson);
+  assert.equal(candidate.scope, "supplied_candidates");
+  assert.equal(candidate.search_complete, false);
+  assert.ok(candidate.descriptors_scored < manifest.catalog_count, "no whole-gallery descriptor pass");
+  assert.ok(candidate.geometry_attempted > 0 && candidate.geometry_attempted <= 8);
+  assert.ok(candidate.geometry_verified_count > 0, "actual correspondence and artwork verification");
+  assert.ok(candidate.timings.total > 0 && candidate.timings.geometry_verification > 0, "host clock measures WASM work");
+  const decision = JSON.parse(engine.combine_candidates(reference.name, titleCandidatesJson, candidateJson));
+  assert.equal(decision.identity.status, "verified_shortlist");
+  assert.equal(decision.identity.card.oracle_id, reference.oracle_id);
+  assert.equal(decision.printing.card, null, "candidate-only scope does not accept a physical printing");
+  assert.ok(decision.identity.sources.includes("visual_geometry"));
+  assert.ok(decision.identity.sources.includes("title"));
+  const emptyCandidatesJson = engine.lookup_title("");
+  const emptyVisualJson = engine.verify_candidates(cropBytes, emptyCandidatesJson, 0);
+  const emptyVisual = JSON.parse(emptyVisualJson);
+  assert.equal(emptyVisual.descriptors_scored, 0);
+  assert.equal(emptyVisual.geometry_attempted, 0);
+  const emptyDecision = JSON.parse(engine.combine_candidates("", emptyCandidatesJson, emptyVisualJson));
+  assert.equal(emptyDecision.identity.status, "unknown");
+  assert.equal(emptyDecision.identity.card, null);
+  assert.throws(() => engine.verify_candidates(cropBytes, titleCandidatesJson, 90), /0 or 180/);
+  console.log("Pipeline: extraction -> indexed title lookup -> bounded geometry -> scoped identity; blank OCR abstains");
 } finally {
   engine.free();
 }

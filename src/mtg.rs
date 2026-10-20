@@ -8,7 +8,7 @@
 pub mod evidence;
 
 /// Independent OCR proposals combined with explicitly scoped visual verification.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
 pub mod identify;
 
 /// Native Magic text recognition using a reusable, separately supplied OCR model.

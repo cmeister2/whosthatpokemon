@@ -12,12 +12,17 @@ use std::{
 use image::{DynamicImage, imageops::FilterType};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+use super::finish_recognition;
 use super::{
-    CatalogIndex, Reference, SCHEME, binary, finish_recognition, has_texture, local,
-    query_descriptors, same_face, same_identity, score_reference, validate_image,
-    validate_metadata, verify_geometry,
+    CatalogIndex, Reference, SCHEME, binary,
+    candidates::{CandidateLocation, CandidateMatches, Ranking},
+    has_texture, local, query_descriptors, same_face, same_identity, score_reference,
+    validate_image, validate_metadata, verify_geometry,
 };
-use crate::{CardMetadata, Error, MatchCandidate, MatchOptions, MatchStatus, Matcher, Recognition};
+#[cfg(test)]
+use crate::MatchCandidate;
+use crate::{CardMetadata, Error, MatchOptions, MatchStatus, Matcher, Recognition};
 
 /// Version of the manifest, independent of each shard's descriptor format.
 const MANIFEST_VERSION: u32 = 2;
@@ -67,26 +72,6 @@ struct Manifest {
     shard_size: usize,
     /// Shards in original enrollment order, preserving deterministic ties.
     shards: Vec<Shard>,
-}
-
-/// Physical position of one face in the immutable sharded catalogue.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(super) struct CandidateLocation {
-    /// Zero-based descriptor shard number.
-    pub(super) shard: usize,
-    /// Zero-based record offset inside the shard.
-    pub(super) offset: usize,
-}
-
-/// Indexed expansion of one supplied OCR/catalogue proposal.
-#[derive(Debug, Default)]
-pub(super) struct CandidateMatches {
-    /// The exact printing and physical face, when enrolled.
-    pub(super) exact: Vec<CandidateLocation>,
-    /// Every enrolled face with the same game-scoped semantic identity.
-    pub(super) identity: Vec<CandidateLocation>,
-    /// Every enrolled face with the same game-scoped illustration.
-    pub(super) illustration: Vec<CandidateLocation>,
 }
 
 /// Long-lived metadata postings used to avoid a catalogue scan for every query.
@@ -1183,96 +1168,6 @@ fn metadata_filename(number: usize) -> String {
 /// Generate filenames without accepting manifest-supplied path traversal.
 fn shard_filename(number: usize) -> String {
     format!("shard-{number:06}.json")
-}
-
-/// Sufficient full-gallery statistics for exact top-k and both runner-up margins.
-pub(super) struct Ranking {
-    /// Number of printing candidates retained, with at least the printing runner-up.
-    limit: usize,
-    /// Best printing candidates, with stable enrollment order for equal scores.
-    top: Vec<MatchCandidate>,
-    /// Best representatives of the strongest two distinct semantic identities.
-    identities: Vec<MatchCandidate>,
-}
-
-impl Ranking {
-    /// Reserve only the requested result count and constant-size margin evidence.
-    pub(super) fn new(top_k: usize) -> Self {
-        Self {
-            limit: top_k.max(2),
-            top: Vec::new(),
-            identities: Vec::new(),
-        }
-    }
-
-    /// Return exact printing and identity margins over all evidence consumed so far.
-    pub(super) fn margins(&self) -> (f32, f32) {
-        let Some(best) = self.top.first() else {
-            return (0.0, 0.0);
-        };
-        let printing = self.top.get(1).map_or(0.0, |next| next.similarity);
-        let identity = self
-            .identities
-            .iter()
-            .find(|candidate| !same_identity(&best.card, &candidate.card))
-            .map_or(0.0, |candidate| candidate.similarity);
-        (
-            (best.similarity - printing).max(0.0),
-            (best.similarity - identity).max(0.0),
-        )
-    }
-
-    /// Consume one candidate without discarding a possible identity runner-up.
-    pub(super) fn push(&mut self, candidate: MatchCandidate) {
-        if let Some(position) = self
-            .identities
-            .iter()
-            .position(|known| same_identity(&known.card, &candidate.card))
-        {
-            if candidate.similarity > self.identities[position].similarity {
-                self.identities[position] = candidate.clone();
-                self.identities
-                    .sort_by(|a, b| b.similarity.total_cmp(&a.similarity));
-            }
-        } else {
-            let position = self
-                .identities
-                .iter()
-                .position(|known| candidate.similarity > known.similarity)
-                .unwrap_or(self.identities.len());
-            if position < 2 {
-                self.identities.insert(position, candidate.clone());
-                self.identities.truncate(2);
-            }
-        }
-        let position = self
-            .top
-            .iter()
-            .position(|known| candidate.similarity > known.similarity)
-            .unwrap_or(self.top.len());
-        if position < self.limit {
-            self.top.insert(position, candidate);
-            self.top.truncate(self.limit);
-        }
-    }
-
-    /// Compute the existing decisions using exact retained sufficient statistics.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for invalid options or an empty catalogue.
-    pub(super) fn finish(mut self, options: &MatchOptions) -> Result<Recognition, Error> {
-        for candidate in self.identities {
-            if !self
-                .top
-                .iter()
-                .any(|known| same_face(&known.card, &candidate.card))
-            {
-                self.top.push(candidate);
-            }
-        }
-        finish_recognition(self.top, options)
-    }
 }
 
 /// Regression coverage for complete-gallery decisions and bounded descriptor storage.

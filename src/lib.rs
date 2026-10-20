@@ -8,6 +8,10 @@
 #[cfg(feature = "web")]
 pub mod browser;
 
+/// Monotonic elapsed timing on native targets and in the browser.
+#[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
+mod clock;
+
 /// Optional native CPU CLIP embeddings for difficult illumination or alignment.
 #[cfg(all(feature = "clip", not(target_arch = "wasm32")))]
 pub mod clip;

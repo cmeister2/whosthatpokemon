@@ -1,18 +1,19 @@
 //! Complete global scoring followed by explicitly scoped candidate geometry.
 
 use super::{
-    Descriptor, GeometryMatch, Reference, has_texture, local, match_geometry, query_descriptors,
-    same_face, same_identity, score_reference,
-    sharded::{CandidateLocation, Ranking, ShardedIndex},
-    validate_image, verify_geometry,
+    Descriptor, GeometryMatch, Reference,
+    candidates::{CandidateLocation, CandidateSource, Ranking},
+    has_texture, local, match_geometry, validate_image,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use super::{
+    ShardedIndex, query_descriptors, same_face, same_identity, score_reference, verify_geometry,
+};
+use crate::clock::Instant;
 use crate::{CardMetadata, Error, MatchCandidate, MatchOptions, MatchStatus, Recognition};
 use image::{DynamicImage, RgbImage, imageops::FilterType};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
-    time::Instant,
-};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Work budgets for global candidate selection and local geometric verification.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -292,6 +293,7 @@ pub struct ShortlistedRecognition {
 }
 
 /// Scalar global evidence retained without duplicating the complete metadata catalogue.
+#[cfg(not(target_arch = "wasm32"))]
 struct CachedScore {
     /// Shard containing this enrolled face.
     shard: usize,
@@ -326,6 +328,7 @@ impl Identity {
 }
 
 /// Selection outcome before touching any local-feature file.
+#[cfg(not(target_arch = "wasm32"))]
 struct Selection {
     /// All proposed physical faces in globally ranked order.
     candidates: Vec<usize>,
@@ -377,7 +380,7 @@ struct CandidateQuery {
 
 /// Return an empty candidate-scoped recognition without opening descriptor files.
 fn empty_candidate_recognition(
-    index: &ShardedIndex,
+    index: &impl CandidateSource,
     proposal_count: usize,
     matched_proposals: usize,
     candidate_count: usize,
@@ -422,8 +425,9 @@ fn empty_candidate_recognition(
 ///
 /// Returns an error for invalid options/input/budget, unsupported legacy storage,
 /// or unavailable/corrupt selected descriptor records.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn recognize_candidates(
-    index: &ShardedIndex,
+    index: &impl CandidateSource,
     image: &DynamicImage,
     options: &MatchOptions,
     max_candidates: usize,
@@ -444,7 +448,7 @@ pub(super) fn recognize_candidates(
 /// Returns an error for invalid options/input/budgets, unsupported legacy storage,
 /// or unavailable/corrupt selected descriptor records.
 pub(super) fn recognize_candidates_with(
-    index: &ShardedIndex,
+    index: &impl CandidateSource,
     image: &DynamicImage,
     options: &MatchOptions,
     candidate_options: &CandidateOptions,
@@ -649,7 +653,7 @@ pub(super) fn recognize_candidates_with(
 
 /// Expand exact face, semantic identity and illustration postings without a gallery scan.
 fn select_candidates(
-    index: &ShardedIndex,
+    index: &impl CandidateSource,
     proposals: &[CardMetadata],
     max_candidates: usize,
 ) -> Result<CandidateSelection, Error> {
@@ -797,6 +801,7 @@ fn score_candidate_reference(reference: &Reference, queries: &[CandidateQuery]) 
 }
 
 /// Verify independent candidate faces concurrently and retain selection order.
+#[cfg(not(target_arch = "wasm32"))]
 fn verify_candidate_geometry(
     scored: &[ScoredCandidate],
     selected: &[usize],
@@ -852,6 +857,25 @@ fn verify_candidate_geometry(
         }
         Ok(results)
     })
+}
+
+/// Verify the same selected faces serially where browser threads are unavailable.
+#[cfg(target_arch = "wasm32")]
+fn verify_candidate_geometry(
+    scored: &[ScoredCandidate],
+    selected: &[usize],
+    query_features: &[local::Feature],
+    normalized: &RgbImage,
+) -> Result<Vec<(usize, Option<GeometryMatch>)>, Error> {
+    Ok(selected
+        .iter()
+        .map(|&position| {
+            (
+                position,
+                match_geometry(&scored[position].reference, query_features, normalized, 0.0),
+            )
+        })
+        .collect())
 }
 
 /// Preserve proposed identities and scored illustration groups before score filling.
@@ -945,6 +969,7 @@ fn select_geometry(
 /// # Errors
 ///
 /// Returns an error for invalid settings/input, unreadable descriptors or invalid gallery files.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn recognize(
     index: &ShardedIndex,
     image: &DynamicImage,
@@ -1148,6 +1173,7 @@ pub(super) fn recognize(
 }
 
 /// Expand seed identities/artwork and reserve diverse representatives before score filling.
+#[cfg(not(target_arch = "wasm32"))]
 fn select(
     cards: &[&CardMetadata],
     scores: &[CachedScore],
@@ -1263,5 +1289,5 @@ fn abstain(recognition: &mut Recognition) {
 }
 
 /// Procedural-image and invented-metadata regressions, without research artifacts.
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
