@@ -177,7 +177,7 @@ async function startCamera() {
     if (!current(generation)) return;
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access requires a supported browser on HTTPS or localhost. Public examples can still be tried.');
     status('Requesting camera access…');
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, resizeMode: { ideal: 'none' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
     if (!current(generation)) { for (const track of stream.getTracks()) track.stop(); return; }
     state.stream = stream;
     for (const track of stream.getVideoTracks()) track.addEventListener('ended', () => { if (current(generation)) { stop(); status('The camera stopped providing video. Start it again to resume.'); } }, { once: true });
@@ -268,7 +268,7 @@ function renderReport(report, measured) {
   $('response-time').textContent = ms(measured.response);
   $('processed-frame').textContent = `${measured.camera ? 'Camera frame' : 'Public image capture'} #${measured.frameId} · captured at ${measured.capturedAt} · response arrived ${ms(measured.response)} later.`;
   if (measured.camera) $('preview-badge').textContent = `Live preview · outlines from frame #${measured.frameId}`;
-  $('result-status').textContent = cards.length ? measured.cropped ? 'The supplied card crop was processed directly.' : `${cards.length} card${cards.length === 1 ? '' : 's'} detected in the latest processed input.` : 'No card-shaped region was detected in this input.';
+  $('result-status').textContent = cards.length ? measured.cropped ? 'The supplied card crop was processed directly.' : `${cards.length} card candidate${cards.length === 1 ? '' : 's'} detected in the latest processed input.` : 'No card-shaped region was detected in this input.';
   $('card-results').replaceChildren(...cards.map(renderCard));
   if (!cards.length) $('card-results').append(node('p', 'empty-result', 'OCR and candidate lookup did not run because extraction found no cards.'));
   const attempts = cards.flatMap((card) => card.attempts || []);
@@ -294,11 +294,12 @@ function renderReport(report, measured) {
 function renderCard(card, index) {
   const selected = card.attempts?.[card.selected_attempt];
   const result = selected?.identification;
+  const captureRejected = Boolean(card.capture_rejection);
   const article = node('article', 'detected-card');
   article.dataset.cardIndex = String(index);
-  if (!result) { article.append(node('p', 'empty-result', 'No identification attempt was returned for this card.')); return article; }
-  const conflict = card.orientation_conflict || result.identity.status === 'conflict';
-  const isAccepted = !conflict && accepted(result);
+  if (!result) { article.append(node('p', 'empty-result', captureRejected ? 'Incomplete card—move the whole card into view' : 'No identification attempt was returned for this card.')); return article; }
+  const conflict = !captureRejected && (card.orientation_conflict || result.identity.status === 'conflict');
+  const isAccepted = !captureRejected && !conflict && accepted(result);
   const heading = node('div', 'card-result-heading');
   if (card.crop_data_url) {
     const image = node('img', 'detected-crop');
@@ -307,9 +308,9 @@ function renderCard(card, index) {
     heading.append(image);
   }
   const summary = node('div');
-  summary.append(node('span', `card-status${conflict ? ' conflict' : isAccepted ? ' accepted' : ''}`, conflict ? 'Conflicting evidence' : isAccepted ? 'Identity supported' : 'Not identified'));
-  summary.append(node('h3', '', isAccepted && result.identity.card ? result.identity.card.name : conflict ? 'More evidence needed' : `Card ${index + 1} remains unresolved`));
-  summary.append(node('p', 'printing-decision', !conflict && result.printing.card ? `Printing: ${printing(result.printing.card)}` : 'Printing unresolved'));
+  summary.append(node('span', `card-status${conflict ? ' conflict' : isAccepted ? ' accepted' : ''}`, captureRejected ? 'Incomplete card' : conflict ? 'Conflicting evidence' : isAccepted ? 'Identity supported' : 'Not identified'));
+  summary.append(node('h3', '', captureRejected ? 'Incomplete card—move the whole card into view' : isAccepted && result.identity.card ? result.identity.card.name : conflict ? 'More evidence needed' : `Card ${index + 1} remains unresolved`));
+  summary.append(node('p', 'printing-decision', !captureRejected && !conflict && result.printing.card ? `Printing: ${printing(result.printing.card)}` : 'Printing unresolved'));
   heading.append(summary);
   article.append(heading);
   const observations = node('dl', 'ocr-observations');
@@ -318,13 +319,17 @@ function renderCard(card, index) {
   }
   article.append(observations);
   const candidates = result.visual.recognition?.candidates || [];
+  if (candidates.length) {
+    article.append(node('h4', '', 'Diagnostic candidates—not accepted identities'));
+    article.append(node('p', 'quiet', 'Feature geometry alignment does not prove that the whole physical card is visible.'));
+  }
   const ranking = node('ol', 'card-match-list');
   for (const candidate of candidates) {
     const row = node('li', 'card-match');
     row.dataset.similarity = String(candidate.similarity);
     const label = node('div', 'card-match-name', candidate.card.face_name || candidate.card.name);
     const verified = (result.visual.geometry_verified || []).some((entry) => entry.card.game === candidate.card.game && entry.card.id === candidate.card.id && entry.card.face_index === candidate.card.face_index);
-    label.append(node('span', 'card-match-printing', `${printing(candidate.card)} · ${verified ? 'Geometry agrees' : 'Unverified'}`));
+    label.append(node('span', 'card-match-printing', `${printing(candidate.card)} · ${verified ? 'Feature geometry aligns' : 'Unverified'}`));
     const value = node('span', 'card-match-score', score(candidate.similarity)); value.append(node('small', '', 'Visual similarity'));
     const meter = node('meter'); meter.min = 0; meter.max = 1; meter.value = candidate.similarity; meter.setAttribute('aria-label', `${candidate.card.name}, ${printing(candidate.card)}: visual similarity`); meter.setAttribute('aria-valuetext', `${score(candidate.similarity)} on a scale from 0 to 1`);
     row.append(label, value, meter); ranking.append(row);
@@ -333,10 +338,10 @@ function renderCard(card, index) {
   if (!candidates.length) article.append(node('p', 'quiet', 'No visual candidates were returned.'));
   const details = node('details', 'card-details');
   details.append(node('summary', '', `Evidence and ${card.attempts.length} orientation attempt${card.attempts.length === 1 ? '' : 's'}`));
-  details.append(node('p', '', card.orientation_conflict ? 'Strong text readings disagree across orientations. The selected attempt remains provisional.' : result.identity.reason));
-  details.append(node('p', '', result.printing.reason));
+  details.append(node('p', '', captureRejected ? card.capture_rejection.reason : card.orientation_conflict ? 'Strong text readings disagree across orientations. The selected attempt remains provisional.' : result.identity.reason));
+  details.append(node('p', '', captureRejected ? 'No identity or printing is accepted for this incomplete capture.' : result.printing.reason));
   details.append(node('p', '', `Compared ${result.visual.descriptors_scored} candidate descriptors; ${result.visual.geometry_attempted} geometry checks. Similarities are heuristic scores, not calibrated probabilities.`));
-  details.append(node('p', '', result.visual.search_complete ? `Native heuristic printing confidence: ${score(result.visual.recognition.confidence)} on a 0–1 scale. This score is uncalibrated.` : 'Printing confidence is not established by a search limited to these shortlisted references.'));
+  details.append(node('p', '', captureRejected ? 'Candidate similarities remain diagnostic model evidence.' : result.visual.search_complete ? `Native heuristic printing confidence: ${score(result.visual.recognition.confidence)} on a 0–1 scale. This score is uncalibrated.` : 'Printing confidence is not established by a search limited to these shortlisted references.'));
   for (const attempt of card.attempts) details.append(node('p', '', `${attempt.ocr.rotation_degrees}° · title ${JSON.stringify(attempt.ocr.reading.text)} · collector ${JSON.stringify(attempt.footer_ocr?.observations.footer || '')} · ${ms(attempt.ocr_ms)} OCR + ${ms(attempt.matching_ms)} matching`));
   for (const disagreement of result.conflicts || []) details.append(node('p', '', `${disagreement.resolved ? 'Resolved' : 'Unresolved'} ${disagreement.kind} disagreement: ${disagreement.reason}`));
   article.append(details);

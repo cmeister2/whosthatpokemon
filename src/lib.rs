@@ -17,6 +17,8 @@ mod clock;
 pub mod clip;
 /// Errors shared by cataloguing, recognition, and image input.
 mod error;
+/// Shared source-validated card outlines for native and browser extraction.
+pub mod extraction;
 /// File decoding and EXIF orientation shared by references and scan inputs.
 mod input;
 /// Camera-friendly recognition scheduling and stable-card result reuse.

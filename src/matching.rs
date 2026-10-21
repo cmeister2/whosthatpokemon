@@ -23,6 +23,12 @@ use serde::{Deserialize, Serialize};
 /// Portable local geometry used when global evidence is insufficient.
 mod local;
 
+/// Resident-only geometry diagnostics for the camera's complete-source policy.
+#[cfg(all(feature = "web", feature = "ocr"))]
+mod camera_projection;
+#[cfg(all(feature = "web", feature = "ocr"))]
+pub(crate) use camera_projection::{CAMERA_FEATURE_DIMENSIONS, CameraProjection};
+
 /// Storage adapters and rankings shared by native and browser candidate searches.
 #[cfg(any(not(target_arch = "wasm32"), feature = "web"))]
 mod candidates;

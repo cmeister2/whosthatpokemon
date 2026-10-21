@@ -7,6 +7,10 @@
 #[cfg(feature = "ocr")]
 mod frame;
 
+/// Camera-only full-reference visibility checks, separate from cropped-image recognition.
+#[cfg(feature = "ocr")]
+mod coverage;
+
 /// Full metadata with resumable, candidate-only canonical image acquisition.
 #[cfg(feature = "ocr")]
 mod remote;
@@ -17,7 +21,7 @@ use std::io::Cursor;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, imageops::FilterType};
-use magicextract::{CardExtractor, ExtractorConfig};
+use magicextract::ExtractorConfig;
 use serde::Serialize;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -27,7 +31,10 @@ use crate::matching::{
 };
 use crate::mtg::evidence::{TextObservations, TitleIndex};
 use crate::mtg::identify::{TextCandidates, collect_title_candidates, combine_candidates};
-use crate::{CatalogIndex, Error, MatchOptions, Recognition, matching::VisualEvidence};
+use crate::{
+    CatalogIndex, Error, MatchOptions, Recognition, extraction::CardExtractor,
+    matching::VisualEvidence,
+};
 
 /// Maximum compressed photo bytes accepted by the browser engine.
 const MAX_INPUT_BYTES: usize = 32 * 1024 * 1024;

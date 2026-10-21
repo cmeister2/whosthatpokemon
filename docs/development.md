@@ -74,6 +74,33 @@ visible on the page. Cold acquisition/preparation and warm query costs are shown
 separately. [Card art](assets/README.md) and the [camera model](camera-model-notice.txt)
 have separate attribution and licences.
 
+### Physical outlines and source visibility
+
+Native scene recognition and the browser camera use `extraction::CardExtractor`.
+Full mode adds bounded coarse/opponent-color proposals to the published detector,
+requiring distributed original-RGB support before recovery. Fast mode retains
+upstream candidate generation. Both modes withhold boundary-touching outlines
+and source-evidenced incomplete panels; rectification samples only original pixels.
+The shared policy identifier is `source_supported_full_card_v2`.
+
+Full-frame browser recognition additionally records
+`capture_policy: canonical_source_visibility_v1` and `capture_validation_ms`.
+Resident, already-verified faces supporting the selected identity are projected
+back through the exact resize and crop-to-source transforms. Rejection requires
+all compatible, reproducible reference extents to remain outside the source after
+a three-normalized-pixel inset. Missing, invalid, changed or contradictory
+geometry—including retained footer/orientation-retry alternatives—withholds it.
+The inset is heuristic, not calibrated uncertainty. A rejection demotes every
+orientation's effective identity/printing to unknown while preserving
+`rejected_model_proposals`; no rejection does not certify a whole card.
+Explicitly cropped recognition and global matching keep their existing semantics.
+
+Rebuild the external `web,ocr` engine with `scripts/build-camera.sh` after these
+changes, and rerun native/WASM parity. Run
+`node --test scripts/check-camera-boundaries.mjs` for camera-page rejection feedback.
+Keep private camera evidence outside committed source and use independently
+reviewed physical perimeters rather than model predictions as regression labels.
+
 The older checked-in `docs/engine` bindings remain available for existing browser
 integrations. Rebuild those using `scripts/build-browser.sh` and verify with
 `node scripts/check-browser.mjs`; they do not supply the camera page's OCR engine.
