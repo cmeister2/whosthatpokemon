@@ -45,5 +45,5 @@ ocr = ["dep:ocracle"]
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24"], optional = true }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-24"], optional = true }
 ureq = { version = "3.4.2", features = ["json"] }
