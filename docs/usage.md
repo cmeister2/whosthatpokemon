@@ -194,6 +194,19 @@ so coordinates refer to the oriented image.
 
 See [Matching](matching.md) for result fields, confidence scores, and limitations.
 
+Scene detection requires the complete physical card inside the image (or configured
+detection window), with three pixels of clearance. Clipped outlines and
+source-evidenced incomplete panels are withheld from recognition. Full mode checks
+bounded coarse/color proposals against the original RGB boundaries; rectified
+crops always use the original pixels. These safeguards do not prove that every
+remaining outline is correct, especially with glare, occlusion or overlapping cards.
+
+The browser camera also checks verified reference geometry against the source
+frame. A conclusive outside-frame projection produces `capture_rejection` and no
+accepted identity or printing; former decisions remain diagnostic proposals.
+Missing or contradictory evidence prevents this rejection, so its absence is not
+a completeness certificate. Explicitly cropped-input recognition is unchanged.
+
 ## Library
 
 `mtg::build_index` imports local references; `RecognitionPipeline::scan` detects

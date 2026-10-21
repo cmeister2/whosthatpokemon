@@ -714,7 +714,7 @@ fn run_ocr(arguments: OcrArgs) -> Result<(), Error> {
         OcrLayout::Modern => mtg::evidence::FrameLayout::Modern,
         OcrLayout::Classic => mtg::evidence::FrameLayout::Classic,
     };
-    let extractor = magicextract::CardExtractor::new(ExtractorConfig {
+    let extractor = whosthatpokemon::extraction::CardExtractor::new(ExtractorConfig {
         output_width: 500,
         output_height: 700,
         ..ExtractorConfig::default()
@@ -859,7 +859,7 @@ fn run_identify(arguments: IdentifyArgs) -> Result<(), Error> {
         OcrLayout::Modern => mtg::evidence::FrameLayout::Modern,
         OcrLayout::Classic => mtg::evidence::FrameLayout::Classic,
     };
-    let extractor = magicextract::CardExtractor::new(ExtractorConfig {
+    let extractor = whosthatpokemon::extraction::CardExtractor::new(ExtractorConfig {
         output_width: 500,
         output_height: 700,
         ..ExtractorConfig::default()

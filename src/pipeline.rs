@@ -1,10 +1,10 @@
 //! Apply a reusable matcher to perspective-corrected cards from a scene.
 
 use image::DynamicImage;
-use magicextract::{CardExtractor, ExtractorConfig};
+use magicextract::ExtractorConfig;
 use serde::{Deserialize, Serialize};
 
-use crate::{CatalogIndex, Error, MatchOptions, Matcher, Recognition};
+use crate::{CatalogIndex, Error, MatchOptions, Matcher, Recognition, extraction::CardExtractor};
 
 /// A detected outline with recognition evidence for the rectified card.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

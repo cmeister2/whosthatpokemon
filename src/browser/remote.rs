@@ -1,12 +1,13 @@
 //! Resumable webcam recognition with full metadata and candidate-only reference acquisition.
 
 use image::{DynamicImage, RgbaImage};
-use magicextract::{CardExtractor, ExtractorConfig};
+use magicextract::ExtractorConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+use super::coverage;
 use super::frame::{CameraCard, CameraReport, validate_frame};
 use crate::matching::{CandidateOptions, RemoteCatalog, RemoteReference};
 use crate::mtg::{
@@ -15,7 +16,11 @@ use crate::mtg::{
     ocr::MagicOcr,
     recognition::CropIdentification,
 };
-use crate::{Error, MatchOptions, clock::Instant};
+use crate::{
+    Error, MatchOptions,
+    clock::Instant,
+    extraction::{CardExtractor, POLICY_ID},
+};
 
 /// Full English metadata envelope, without preloaded visual feature banks.
 #[derive(Deserialize)]
@@ -51,6 +56,8 @@ struct PendingFrame {
     width: u32,
     /// Actual decoded frame height.
     height: u32,
+    /// Explicitly cropped inputs retain their existing trimmed-card recognition behavior.
+    cropped: bool,
     /// Caller-selected historic or modern field template.
     layout: FrameLayout,
     /// Actual extracted crops, bounded to four.
@@ -67,6 +74,8 @@ struct PendingFrame {
     cpu_ms: f64,
     /// Actual diagnostic PNG serialization time.
     export_ms: f64,
+    /// Additional source-visibility work, also included in cumulative active CPU time.
+    validation_ms: f64,
 }
 
 /// A complete frame or a concrete request for only the next selected reference images.
@@ -194,6 +203,7 @@ impl RemoteBrowserEngine {
         self.frame = Some(PendingFrame {
             width,
             height,
+            cropped,
             layout: if classic {
                 FrameLayout::Classic
             } else {
@@ -210,6 +220,7 @@ impl RemoteBrowserEngine {
             },
             cpu_ms: started.elapsed().as_secs_f64() * 1000.0,
             export_ms: 0.0,
+            validation_ms: 0.0,
         });
         self.continue_frame()
     }
@@ -318,11 +329,36 @@ impl RemoteBrowserEngine {
                     return Ok(FrameProgress::NeedsReferences { requests });
                 }
                 Err(error) => return Err(error),
-                Ok(identification) => {
+                Ok(mut identification) => {
+                    let validation = Instant::now();
+                    let mut capture_rejection = if frame.cropped {
+                        None
+                    } else {
+                        let verified = coverage::supporting_faces(&identification);
+                        let faces = verified
+                            .iter()
+                            .map(|entry| entry.card.clone())
+                            .collect::<Vec<_>>();
+                        let projections = self.catalog.camera_projections(&crop.image, &faces)?;
+                        coverage::rejection(
+                            &verified,
+                            &projections,
+                            (crop.image.width(), crop.image.height()),
+                            crop.corners,
+                            (frame.width, frame.height),
+                        )
+                    };
+                    if let Some(rejection) = &mut capture_rejection {
+                        rejection.apply(&mut identification);
+                    }
+                    let validation_ms = validation.elapsed().as_secs_f64() * 1000.0;
+                    frame.validation_ms += validation_ms;
+                    frame.cpu_ms += validation_ms;
                     let export = Instant::now();
                     frame.cards.push(CameraCard {
                         identification,
                         crop_data_url: super::data_url(&crop.image)?,
+                        capture_rejection,
                     });
                     frame.export_ms += export.elapsed().as_secs_f64() * 1000.0;
                     frame.work = None;
@@ -332,9 +368,12 @@ impl RemoteBrowserEngine {
         }
         Ok(FrameProgress::Complete {
             report: CameraReport {
+                detector_policy: POLICY_ID,
+                capture_policy: (!frame.cropped).then_some(coverage::POLICY),
                 width: frame.width,
                 height: frame.height,
                 extraction_ms: frame.extraction_ms,
+                capture_validation_ms: frame.validation_ms,
                 total_ms: frame.cpu_ms,
                 diagnostic_export_ms: frame.export_ms,
                 cards: frame.cards,

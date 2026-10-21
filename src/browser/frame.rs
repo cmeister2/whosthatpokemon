@@ -3,6 +3,8 @@
 use crate::{Error, mtg::recognition::IdentifiedCard};
 use serde::Serialize;
 
+use super::coverage::CaptureRejection;
+
 /// Maximum frame edge accepted after camera preview downsampling.
 const MAX_FRAME_EDGE: u32 = 1280;
 /// Maximum decoded camera pixels accepted before copying into image storage.
@@ -11,22 +13,32 @@ const MAX_FRAME_PIXELS: u64 = 1_638_400;
 /// One actual browser result, with its rectified image encoded after recognition timing.
 #[derive(Serialize)]
 pub(super) struct CameraCard {
-    /// Unchanged shared native/browser recognition result.
+    /// Shared recognition evidence with camera-only abstentions applied when necessary.
     #[serde(flatten)]
     pub(super) identification: IdentifiedCard,
     /// Real rectified input pixels for display, without metadata substitution.
     pub(super) crop_data_url: String,
+    /// Explicit source-visibility rejection; not a human annotation or replacement crop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) capture_rejection: Option<CaptureRejection>,
 }
 
 /// Actual elapsed browser processing and card evidence for one decoded frame.
 #[derive(Serialize)]
 pub(super) struct CameraReport {
+    /// Shared extraction policy used by live outlines and this recognition frame.
+    pub(super) detector_policy: &'static str,
+    /// Camera-only source-visibility policy; omitted for explicitly cropped input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) capture_policy: Option<&'static str>,
     /// Decoded frame width supplied by the browser.
     pub(super) width: u32,
     /// Decoded frame height supplied by the browser.
     pub(super) height: u32,
     /// Detection and perspective rectification wall time in milliseconds.
     pub(super) extraction_ms: f64,
+    /// Additional camera-only reference-projection checks, included in total time.
+    pub(super) capture_validation_ms: f64,
     /// Extraction, OCR and identification wall time, excluding preview PNG export.
     pub(super) total_ms: f64,
     /// Actual PNG serialization time, reported separately from recognition.

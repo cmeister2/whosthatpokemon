@@ -8,7 +8,8 @@ use std::{
 };
 
 use super::{
-    CandidateOptions, CandidateRecognition, CatalogCandidateLookup, CatalogIndex, Reference,
+    CameraProjection, CandidateOptions, CandidateRecognition, CatalogCandidateLookup, CatalogIndex,
+    Reference,
     candidates::{CandidateLocation, CandidateMatches, CandidateSource},
     local,
 };
@@ -217,6 +218,32 @@ impl RemoteCatalog {
             super::shortlist::recognize_candidates_with(&source, image, options, budget, cards)
         }
     }
+
+    /// Recompute camera-only local geometry for exact faces already verified for this same crop.
+    ///
+    /// Missing or featureless resident banks are skipped without requesting images,
+    /// changing cache order or changing global/candidate recognition decisions.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid input for duplicate/excessive requests or invalid pixels,
+    /// or an invalid-catalogue error for an unknown exact physical face.
+    pub(crate) fn camera_projections(
+        &self,
+        image: &DynamicImage,
+        cards: &[CardMetadata],
+    ) -> Result<Vec<CameraProjection>, Error> {
+        super::camera_projection::validate_requests(cards)?;
+        let mut references = Vec::with_capacity(cards.len());
+        for card in cards {
+            let position = self.position(&card.game, &card.id, card.face_index)?;
+            let reference = &self.index.references[position];
+            if !reference.views.is_empty() && !reference.features.is_empty() {
+                references.push(reference);
+            }
+        }
+        super::camera_projection::project_resident(image, &references)
+    }
 }
 
 /// Candidate-source adapter preserving complete metadata scope while requesting only absent banks.
@@ -413,5 +440,98 @@ mod tests {
         let mut untrusted = records(1);
         untrusted[0].image_url = "https://unrelated.invalid/image.jpg".into();
         assert!(RemoteCatalog::new(untrusted).is_err());
+    }
+
+    /// Camera diagnostics never fetch or pin an unacquired canonical reference bank.
+    #[test]
+    fn camera_projections_skip_missing_banks_without_cache_side_effects() {
+        let catalog = RemoteCatalog::new(records(8)).unwrap();
+        let cards = catalog.metadata().cloned().collect::<Vec<_>>();
+        assert!(
+            catalog
+                .camera_projections(&pixels(), &cards)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(catalog.lru.borrow().is_empty());
+        assert!(catalog.pinned.borrow().is_empty());
+        assert!(
+            catalog
+                .index
+                .references
+                .iter()
+                .all(|reference| { reference.views.is_empty() && reference.features.is_empty() })
+        );
+        let empty = DynamicImage::ImageRgb8(RgbImage::new(0, 0));
+        assert!(matches!(
+            catalog.camera_projections(&empty, &cards),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+
+    /// Request limits and exact physical identities are checked without image acquisition.
+    #[test]
+    fn camera_projections_bound_requests_and_reject_duplicate_or_unknown_faces() {
+        let catalog = RemoteCatalog::new(records(9)).unwrap();
+        let cards = catalog.metadata().cloned().collect::<Vec<_>>();
+        assert!(matches!(
+            catalog.camera_projections(&pixels(), &cards),
+            Err(Error::InvalidInput(message)) if message.contains("eight-face")
+        ));
+        let duplicate = vec![cards[0].clone(), cards[0].clone()];
+        assert!(matches!(
+            catalog.camera_projections(&pixels(), &duplicate),
+            Err(Error::InvalidInput(message)) if message.contains("duplicate")
+        ));
+        let mut unknown = cards[0].clone();
+        unknown.id = "not-enrolled".into();
+        assert!(matches!(
+            catalog.camera_projections(&pixels(), &[unknown]),
+            Err(Error::InvalidCatalog(_))
+        ));
+        assert!(catalog.pinned.borrow().is_empty());
+        assert!(catalog.lru.borrow().is_empty());
+    }
+
+    /// Resident diagnostics preserve the exact existing query normalization and local evidence.
+    #[test]
+    fn camera_projections_return_unchanged_local_evidence_for_same_query() {
+        let mut catalog = RemoteCatalog::new(records(1)).unwrap();
+        let image = pixels();
+        catalog.pinned.borrow_mut().insert(0);
+        catalog.enroll(0, &image).unwrap();
+        let mut requested = catalog.index.references[0].card.clone();
+        requested.name = "caller metadata must not replace canonical bank metadata".into();
+        let pinned = catalog.pinned.borrow().clone();
+        let lru = catalog.lru.borrow().clone();
+        for query in [image.clone(), DynamicImage::ImageRgba8(image.to_rgba8())] {
+            let rgb = query.to_rgb8();
+            let normalized = image::imageops::resize(
+                &rgb,
+                local::WIDTH,
+                local::HEIGHT,
+                image::imageops::FilterType::Triangle,
+            );
+            let expected = local::match_evidence(
+                &local::extract_query(&query, &normalized),
+                &catalog.index.references[0].features,
+            )
+            .unwrap();
+            let actual = catalog
+                .camera_projections(&query, std::slice::from_ref(&requested))
+                .unwrap();
+            assert_eq!(actual.len(), 1);
+            assert_eq!(actual[0].card, catalog.index.references[0].card);
+            assert_eq!(actual[0].similarity, expected.score);
+            assert_eq!(actual[0].rotation_degrees, expected.rotation_degrees);
+            assert_eq!(actual[0].projection, expected.projection);
+            assert!(actual[0].projection.iter().all(|value| value.is_finite()));
+        }
+        assert_eq!(*catalog.pinned.borrow(), pinned);
+        assert_eq!(*catalog.lru.borrow(), lru);
+        assert_eq!(
+            super::super::CAMERA_FEATURE_DIMENSIONS,
+            (local::WIDTH, local::HEIGHT)
+        );
     }
 }
