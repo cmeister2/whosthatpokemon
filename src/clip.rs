@@ -179,12 +179,13 @@ impl ClipEncoder {
         let digest = model_digest(&model_bytes);
         // Check the explicit path before interacting with the process-global API.
         let _runtime = File::open(runtime_path)?;
-        ort::init_from(runtime_path)
+        let environment = ort::init_from(runtime_path)
             .map_err(backend_error)?
             .with_name("whosthatpokemon")
             .with_telemetry(false)
-            .commit();
-        let mut session = Session::builder()
+            .build()
+            .map_err(backend_error)?;
+        let mut session = Session::builder(&environment)
             .map_err(backend_error)?
             .with_intra_threads(1)
             .map_err(backend_error)?
@@ -515,7 +516,7 @@ impl Matcher for ClipIndex {
 }
 
 /// Map a runtime failure into the backend-independent error contract.
-fn backend_error<T>(error: ort::Error<T>) -> Error {
+fn backend_error(error: impl std::fmt::Display) -> Error {
     Error::Backend(format!("CLIP ONNX Runtime: {error}"))
 }
 
