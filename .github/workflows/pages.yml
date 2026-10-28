@@ -89,7 +89,7 @@ jobs:
           "$RUNNER_TEMP/wtp-pages" "$RUNNER_TEMP/wtp-camera-parity"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
           package-manager-cache: false
       - name: Run the deployed OCRacle WASM and compare with native identification
         run: node scripts/check-camera.mjs "$RUNNER_TEMP/wtp-pages" "$RUNNER_TEMP/wtp-camera-parity"
