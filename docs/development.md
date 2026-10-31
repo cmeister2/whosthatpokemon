@@ -62,7 +62,9 @@ node scripts/check-camera.mjs /tmp/pages /tmp/camera-parity
 python3 -m http.server 8000 --directory /tmp/pages
 ```
 
-The camera build requires `wasm32-unknown-unknown` and `wasm-bindgen-cli 0.2.129`.
+The camera build requires `wasm32-unknown-unknown`, Python 3.11 or newer, and a
+`wasm-bindgen-cli` matching the version resolved in `Cargo.lock`. Install it with
+`cargo install wasm-bindgen-cli --locked --version "$(python3 scripts/wasm-bindgen-version.py)"`.
 It enables portable WASM SIMD and runs on one worker without shared-memory headers.
 The parity check executes the actual deployed OCR weights and compares native
 and WASM results on identical public pixels, including Secret Lair and inverted

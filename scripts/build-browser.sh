@@ -5,9 +5,11 @@ set -euo pipefail
 repository_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$repository_dir"
 bindgen_command="${WASM_BINDGEN:-wasm-bindgen}"
+required_bindgen_version="$(python3 scripts/wasm-bindgen-version.py)"
 bindgen_version="$("$bindgen_command" --version)"
-if [[ "$bindgen_version" != "wasm-bindgen 0.2.129" ]]; then
-    printf 'Expected wasm-bindgen 0.2.129, found %s\n' "$bindgen_version" >&2
+if [[ "$bindgen_version" != "wasm-bindgen $required_bindgen_version" ]]; then
+    printf 'Expected wasm-bindgen %s from Cargo.lock, found %s\n' \
+        "$required_bindgen_version" "$bindgen_version" >&2
     exit 1
 fi
 
